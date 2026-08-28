@@ -22,16 +22,17 @@ def save_schedule(schedule):
 
 # ======================== КНОПКИ ========================
 
-def get_day_keyboard(week_offset=0):
+def get_day_keyboard(week_offset=0, selected_day=0):
     days = ["ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ", "ВС"]
     buttons = []
     for i, day in enumerate(days):
+        is_selected = "✅ " if i == selected_day else ""
         callback = f"day_{i}_{week_offset}"
-        buttons.append(InlineKeyboardButton(day, callback_data=callback))
+        buttons.append(InlineKeyboardButton(f"{is_selected}{day}", callback_data=callback))
     
     nav_buttons = [
         InlineKeyboardButton("◀ Назад", callback_data=f"week_{week_offset-1}"),
-        InlineKeyboardButton("Сегодня", callback_data="today"),
+        InlineKeyboardButton("📅 Сегодня", callback_data="today"),
         InlineKeyboardButton("Вперёд ▶", callback_data=f"week_{week_offset+1}")
     ]
     
@@ -43,7 +44,7 @@ def get_day_keyboard(week_offset=0):
     keyboard = [buttons, nav_buttons, action_buttons]
     return InlineKeyboardMarkup(keyboard)
 
-# ======================== ФОРМАТИРОВАНИЕ РАСПИСАНИЯ ========================
+# ======================== ФОРМАТИРОВАНИЕ РАСПИСАНИЯ (КРАСИВО) ========================
 
 def format_schedule(day_index, week_offset=0):
     schedule = load_schedule()
@@ -60,27 +61,37 @@ def format_schedule(day_index, week_offset=0):
     lessons = schedule.get(key, [])
     lessons.sort(key=lambda x: x.get("time", "00:00"))
     
-    if not lessons:
-        return f"📅 {day_name} {date_str}\n\nЗанятий нет 🎉\n\nСвободно: весь день"
+    # Определяем, сегодня это или нет
+    today_key = today.strftime("%Y-%m-%d")
+    is_today = key == today_key
     
-    text = f"📅 {day_name} {date_str}\n\n"
-    text += "┌────────────┬────────────────────┬──────┐\n"
-    text += "│ ВРЕМЯ      │ УЧЕНИК             │ ТЕМА │\n"
-    text += "├────────────┼────────────────────┼──────┤\n"
+    header = "📅"
+    if is_today:
+        header = "📅 СЕГОДНЯ"
+    elif week_offset == 0:
+        header = f"📅 {day_name} {date_str}"
+    else:
+        header = f"📅 {day_name} {date_str}"
+    
+    if not lessons:
+        return f"{header}\n\n✨ Нет занятий\n\n🎉 Свободно: весь день"
+    
+    text = f"{header}\n\n"
     
     for lesson in lessons:
         time = lesson.get("time", "00:00")
         student = lesson.get("student", "Неизвестно")
         topic = lesson.get("topic", "-")
-        text += f"│ {time}   │ {student:<18} │ {topic:<4} │\n"
+        text += f"🕐 *{time}* — {student}\n"
+        if topic != "-":
+            text += f"   📚 {topic}\n"
+        text += "\n"
     
-    text += "└────────────┴────────────────────┴──────┘\n"
     return text
 
 # ======================== НАПОМИНАНИЯ ========================
 
 async def check_reminders(context: ContextTypes.DEFAULT_TYPE):
-    """Проверяет, нужно ли отправить напоминание"""
     schedule = load_schedule()
     now = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
     today_key = now.strftime("%Y-%m-%d")
@@ -93,26 +104,15 @@ async def check_reminders(context: ContextTypes.DEFAULT_TYPE):
             diff = (lesson_dt - now).total_seconds() / 60
             
             if 55 <= diff <= 65:
-                student_id = lesson.get("user_id")
-                student_name = lesson.get("student", "Ученик")
+                student = lesson.get("student", "Ученик")
                 topic = lesson.get("topic", "занятие")
+                student_id = lesson.get("user_id")
                 
                 if student_id:
                     try:
                         await context.bot.send_message(
                             chat_id=student_id,
-                            text=f"⏰ Напоминание!\nУ вас занятие через час:\n👤 {student_name}\n📚 {topic}\n🕐 {lesson_time}"
-                        )
-                    except:
-                        pass
-                
-                # Отправляем преподавателю (его ID)
-                teacher_id = lesson.get("teacher_id")
-                if teacher_id:
-                    try:
-                        await context.bot.send_message(
-                            chat_id=teacher_id,
-                            text=f"⏰ Напоминание!\nЧерез час занятие:\n👤 {student_name}\n📚 {topic}\n🕐 {lesson_time}"
+                            text=f"⏰ Напоминание!\nЧерез час занятие:\n👤 {student}\n📚 {topic}\n🕐 {lesson_time}"
                         )
                     except:
                         pass
@@ -122,52 +122,56 @@ async def check_reminders(context: ContextTypes.DEFAULT_TYPE):
 # ======================== КОМАНДЫ ========================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    context.user_data["user_id"] = user_id
-    
     await update.message.reply_text(
-        "👋 Привет! Я бот-расписание преподавателя.\n\n"
+        "👋 Привет! Я бот-расписание.\n\n"
         "📅 Показать расписание: /schedule\n"
         "➕ Добавить занятие: /add\n"
         "🗑 Удалить занятие: /delete\n"
-        "📊 Показать неделю: /week\n\n"
-        "⚙️ Настройки: /settings"
+        "📊 Статистика: /week"
     )
 
 async def show_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
     today = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
     day_index = today.weekday()
+    context.user_data['selected_day'] = day_index
+    context.user_data['week_offset'] = 0
     
     text = format_schedule(day_index, 0)
-    await update.message.reply_text(text, reply_markup=get_day_keyboard(0))
+    await update.message.reply_text(
+        text,
+        reply_markup=get_day_keyboard(0, day_index),
+        parse_mode='Markdown'
+    )
 
 async def show_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
     days = ["ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ", "ВС"]
     today = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
     start_of_week = today - datetime.timedelta(days=today.weekday())
     
-    text = "📊 РАСПИСАНИЕ НА НЕДЕЛЮ\n\n"
-    total_lessons = 0
+    text = "📊 *РАСПИСАНИЕ НА НЕДЕЛЮ*\n\n"
+    total = 0
     
     for i, day in enumerate(days):
         target_date = start_of_week + datetime.timedelta(days=i)
         key = target_date.strftime("%Y-%m-%d")
         lessons = load_schedule().get(key, [])
         count = len(lessons)
-        total_lessons += count
-        text += f"{day} {target_date.strftime('%d.%m')}: {count} занятий\n"
+        total += count
+        
+        emoji = "✅" if count > 0 else "⬜"
+        text += f"{emoji} {day} {target_date.strftime('%d.%m')}: {count} занятий\n"
     
-    text += f"\n📊 Всего занятий на неделе: {total_lessons}"
-    await update.message.reply_text(text)
+    text += f"\n📊 *Всего: {total} занятий*"
+    await update.message.reply_text(text, parse_mode='Markdown')
 
 async def add_lesson(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "➕ Добавление занятия.\n\n"
+        "➕ *Добавление занятия*\n\n"
         "Введи данные в формате:\n"
-        "`Дата Время Имя Тема`\n\n"
+        "`ДД.ММ ЧЧ:ММ Имя Тема`\n\n"
         "Пример:\n"
-        "`15.04 10:00 Иванов Производная`\n\n"
-        "📌 Дата в формате ДД.ММ"
+        "`29.08 17:00 Иван Производная`",
+        parse_mode='Markdown'
     )
     context.user_data["waiting_for_lesson"] = True
 
@@ -178,13 +182,12 @@ async def handle_add_lesson(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         parts = update.message.text.split(maxsplit=3)
         if len(parts) < 3:
-            await update.message.reply_text("❌ Неверный формат. Пример: `15.04 10:00 Иванов Производная`")
+            await update.message.reply_text("❌ Неверный формат. Пример: `29.08 17:00 Иван Производная`")
             return
         
         date_str, time_str, student = parts[0], parts[1], parts[2]
         topic = parts[3] if len(parts) > 3 else "-"
         
-        # Преобразуем дату
         day, month = map(int, date_str.split('.'))
         now = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
         year = now.year
@@ -201,12 +204,11 @@ async def handle_add_lesson(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "time": time_str,
             "student": student,
             "topic": topic,
-            "user_id": update.effective_user.id,
-            "teacher_id": update.effective_user.id
+            "user_id": update.effective_user.id
         })
         
         save_schedule(schedule)
-        await update.message.reply_text(f"✅ Занятие добавлено:\n📅 {date_str}\n🕐 {time_str}\n👤 {student}\n📚 {topic}")
+        await update.message.reply_text(f"✅ Занятие добавлено!\n📅 {date_str}\n🕐 {time_str}\n👤 {student}\n📚 {topic}")
         
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {e}")
@@ -215,9 +217,10 @@ async def handle_add_lesson(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def delete_lesson(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🗑 Удаление занятия.\n\n"
+        "🗑 *Удаление занятия*\n\n"
         "Введи дату и имя ученика:\n"
-        "`15.04 Иванов`"
+        "`29.08 Иван`",
+        parse_mode='Markdown'
     )
     context.user_data["waiting_for_delete"] = True
 
@@ -228,7 +231,7 @@ async def handle_delete_lesson(update: Update, context: ContextTypes.DEFAULT_TYP
     try:
         parts = update.message.text.split(maxsplit=1)
         if len(parts) < 2:
-            await update.message.reply_text("❌ Неверный формат. Пример: `15.04 Иванов`")
+            await update.message.reply_text("❌ Неверный формат. Пример: `29.08 Иван`")
             return
         
         date_str, student = parts[0], parts[1]
@@ -271,30 +274,47 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "today":
         today = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
         day_index = today.weekday()
+        context.user_data['selected_day'] = day_index
+        context.user_data['week_offset'] = 0
         text = format_schedule(day_index, 0)
-        await query.edit_message_text(text, reply_markup=get_day_keyboard(0))
+        await query.edit_message_text(
+            text,
+            reply_markup=get_day_keyboard(0, day_index),
+            parse_mode='Markdown'
+        )
         return
     
     if data.startswith("day_"):
         parts = data.split("_")
         day_index = int(parts[1])
         week_offset = int(parts[2])
+        context.user_data['selected_day'] = day_index
+        context.user_data['week_offset'] = week_offset
         text = format_schedule(day_index, week_offset)
-        await query.edit_message_text(text, reply_markup=get_day_keyboard(week_offset))
+        await query.edit_message_text(
+            text,
+            reply_markup=get_day_keyboard(week_offset, day_index),
+            parse_mode='Markdown'
+        )
         return
     
     if data.startswith("week_"):
         week_offset = int(data.split("_")[1])
-        today = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
-        day_index = today.weekday()
+        context.user_data['week_offset'] = week_offset
+        day_index = context.user_data.get('selected_day', 0)
         text = format_schedule(day_index, week_offset)
-        await query.edit_message_text(text, reply_markup=get_day_keyboard(week_offset))
+        await query.edit_message_text(
+            text,
+            reply_markup=get_day_keyboard(week_offset, day_index),
+            parse_mode='Markdown'
+        )
         return
     
     if data == "add_lesson":
         await query.message.reply_text(
             "➕ Введи данные в формате:\n"
-            "`15.04 10:00 Иванов Производная`"
+            "`29.08 17:00 Иван Производная`",
+            parse_mode='Markdown'
         )
         context.user_data["waiting_for_lesson"] = True
         return
@@ -302,7 +322,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "delete_lesson":
         await query.message.reply_text(
             "🗑 Введи дату и имя:\n"
-            "`15.04 Иванов`"
+            "`29.08 Иван`",
+            parse_mode='Markdown'
         )
         context.user_data["waiting_for_delete"] = True
         return
@@ -310,6 +331,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ======================== ЗАПУСК ========================
 
 def main():
+    import os
     TOKEN = os.getenv("SCHEDULE_BOT_TOKEN")
     if not TOKEN:
         print("❌ SCHEDULE_BOT_TOKEN не найден!")
@@ -317,21 +339,17 @@ def main():
     
     app = Application.builder().token(TOKEN).build()
     
-    # Команды
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("schedule", show_schedule))
     app.add_handler(CommandHandler("week", show_week))
     app.add_handler(CommandHandler("add", add_lesson))
     app.add_handler(CommandHandler("delete", delete_lesson))
     
-    # Обработка кнопок
     app.add_handler(CallbackQueryHandler(handle_callback))
     
-    # Обработка текста (добавление/удаление)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_add_lesson))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_delete_lesson))
     
-    # Планировщик напоминаний (каждую минуту)
     job_queue = app.job_queue
     if job_queue:
         job_queue.run_repeating(check_reminders, interval=60, first=10)
