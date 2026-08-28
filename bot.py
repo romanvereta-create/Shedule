@@ -818,9 +818,9 @@ def main():
     if not TOKEN:
         print("❌ SCHEDULE_BOT_TOKEN не найден!")
         return
-    
+
     app = Application.builder().token(TOKEN).build()
-    
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("schedule", show_schedule))
     app.add_handler(CommandHandler("week", show_week))
@@ -829,23 +829,25 @@ def main():
     app.add_handler(CommandHandler("create_group", create_group))
     app.add_handler(CommandHandler("delete", delete_lesson))
     app.add_handler(CommandHandler("settings", settings_menu))
-    
-    app.add_handler(CallbackQueryHandler(handle_callback))
-    
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_group_name))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_delete_lesson))
-    try:
-    job_queue = app.job_queue
-    if job_queue:
-        job_queue.run_repeating(check_reminders, interval=60, first=10)
-        print("✅ Напоминания включены")
-    else:
-        print("ℹ️ JobQueue не доступен")
-except Exception as e:
-    print(f"⚠️ Ошибка настройки JobQueue: {e}")
 
-print("✅ БОТ РАСПИСАНИЯ ЗАПУЩЕН!")
-app.run_polling()
+    app.add_handler(CallbackQueryHandler(handle_callback))
+
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_group_name))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_group_members))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_delete_lesson))
+
+    try:
+        job_queue = app.job_queue
+        if job_queue:
+            job_queue.run_repeating(check_reminders, interval=60, first=10)
+            print("✅ Напоминания включены")
+        else:
+            print("ℹ️ JobQueue не доступен")
+    except Exception as e:
+        print(f"⚠️ Ошибка настройки JobQueue: {e}")
+
+    print("✅ БОТ РАСПИСАНИЯ ЗАПУЩЕН!")
+    app.run_polling()
 
 if __name__ == "__main__":
     main()
