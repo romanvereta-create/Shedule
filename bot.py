@@ -833,4 +833,19 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_callback))
     
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_group_name))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_delete_lesson))
+    try:
+    job_queue = app.job_queue
+    if job_queue:
+        job_queue.run_repeating(check_reminders, interval=60, first=10)
+        print("✅ Напоминания включены")
+    else:
+        print("ℹ️ JobQueue не доступен")
+except Exception as e:
+    print(f"⚠️ Ошибка настройки JobQueue: {e}")
+
+print("✅ БОТ РАСПИСАНИЯ ЗАПУЩЕН!")
+app.run_polling()
+
+if __name__ == "__main__":
+    main()
