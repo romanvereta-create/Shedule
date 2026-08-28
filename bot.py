@@ -1,8 +1,24 @@
+import subprocess
+import sys
+import os
+
+# АВТОУСТАНОВКА БИБЛИОТЕК ПРИ ЗАПУСКЕ
+def auto_install():
+    required = ["python-telegram-bot[job-queue]", "pytz"]
+    for package in required:
+        try:
+            if package == "pytz":
+                import pytz
+            else:
+                __import__(package.split("[")[0].replace("-", "_"))
+        except ImportError:
+            print(f"📦 Устанавливаю {package}...")
+            subprocess.check_call([sys.executable, "-m", "pip", "install", package, "--quiet"])
+
+auto_install()
 
 import datetime
-import os
 import json
-import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 import pytz
@@ -10,6 +26,7 @@ import pytz
 # ======================== ХРАНЕНИЕ ДАННЫХ ========================
 
 DATA_FILE = "schedule.json"
+STUDENTS_FILE = "students.json"
 
 def load_schedule():
     if os.path.exists(DATA_FILE):
@@ -20,6 +37,16 @@ def load_schedule():
 def save_schedule(schedule):
     with open(DATA_FILE, 'w', encoding='utf-8') as f:
         json.dump(schedule, f, ensure_ascii=False, indent=2)
+
+def load_students():
+    if os.path.exists(STUDENTS_FILE):
+        with open(STUDENTS_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return {}
+
+def save_students(students):
+    with open(STUDENTS_FILE, 'w', encoding='utf-8') as f:
+        json.dump(students, f, ensure_ascii=False, indent=2)
 
 # ======================== КНОПКИ ========================
 
@@ -45,7 +72,55 @@ def get_day_keyboard(week_offset=0, selected_day=0):
     keyboard = [buttons, nav_buttons, action_buttons]
     return InlineKeyboardMarkup(keyboard)
 
-# ======================== ФОРМАТИРОВАНИЕ РАСПИСАНИЯ ========================
+def get_students_keyboard():
+    students = load_students()
+    if not students:
+        return None
+    
+    buttons = []
+    for student_id, name in students.items():
+        buttons.append([InlineKeyboardButton(name, callback_data=f"student_{student_id}_{name}")])
+    
+    buttons.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel_add")])
+    return InlineKeyboardMarkup(buttons)
+
+def get_date_keyboard():
+    today = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
+    buttons = []
+    
+    for i in range(7):
+        date = today + datetime.timedelta(days=i)
+        date_str = date.strftime("%d.%m.%Y")
+        day_name = ["ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ", "ВС"][date.weekday()]
+        buttons.append([InlineKeyboardButton(f"{day_name} {date_str}", callback_data=f"date_{date_str}")])
+    
+    buttons.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel_add")])
+    return InlineKeyboardMarkup(buttons)
+
+def get_time_hours_keyboard():
+    buttons = []
+    row = []
+    for h in range(9, 22):
+        row.append(InlineKeyboardButton(f"{h:02d}:00", callback_data=f"hour_{h}"))
+        if len(row) == 4:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+    buttons.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel_add")])
+    return InlineKeyboardMarkup(buttons)
+
+def get_time_minutes_keyboard(hour):
+    buttons = [
+        [InlineKeyboardButton("00", callback_data=f"min_{hour}_00"),
+         InlineKeyboardButton("15", callback_data=f"min_{hour}_15"),
+         InlineKeyboardButton("30", callback_data=f"min_{hour}_30"),
+         InlineKeyboardButton("45", callback_data=f"min_{hour}_45")],
+        [InlineKeyboardButton("❌ Отмена", callback_data="cancel_add")]
+    ]
+    return InlineKeyboardMarkup(buttons)
+
+# ======================== ФОРМАТИРОВАНИЕ ========================
 
 def format_schedule(day_index, week_offset=0):
     schedule = load_schedule()
@@ -105,12 +180,12 @@ async def check_reminders(context: ContextTypes.DEFAULT_TYPE):
             if 55 <= diff <= 65:
                 student = lesson.get("student", "Ученик")
                 topic = lesson.get("topic", "занятие")
-                student_id = lesson.get("user_id")
+                student_id = lesson.get("student_id")
                 
                 if student_id:
                     try:
                         await context.bot.send_message(
-                            chat_id=student_id,
+                            chat_id=int(student_id),
                             text=f"⏰ Напоминание!\nЧерез час занятие:\n👤 {student}\n📚 {topic}\n🕐 {lesson_time}"
                         )
                     except:
@@ -121,8 +196,19 @@ async def check_reminders(context: ContextTypes.DEFAULT_TYPE):
 # ======================== КОМАНДЫ ========================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+    first_name = update.effective_user.first_name or "Пользователь"
+    
+    students = load_students()
+    if user_id not in students:
+        students[user_id] = first_name
+        save_students(students)
+        await update.message.reply_text(f"✅ {first_name}, ты зарегистрирован как ученик!")
+    else:
+        await update.message.reply_text(f"👋 С возвращением, {first_name}!")
+    
     await update.message.reply_text(
-        "👋 Привет! Я бот-расписание.\n\n"
+        "👋 Я бот-расписание.\n\n"
         "📅 Показать расписание: /schedule\n"
         "➕ Добавить занятие: /add\n"
         "🗑 Удалить занятие: /delete\n"
@@ -164,36 +250,130 @@ async def show_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode='Markdown')
 
 async def add_lesson(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "➕ *Добавление занятия*\n\n"
-        "Введи данные в формате:\n"
-        "`ДД.ММ ЧЧ:ММ Имя Тема`\n\n"
-        "Пример:\n"
-        "`29.08 17:00 Иван Производная`",
-        parse_mode='Markdown'
-    )
-    context.user_data["waiting_for_lesson"] = True
-
-async def handle_add_lesson(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.user_data.get("waiting_for_lesson"):
+    students = load_students()
+    if not students:
+        await update.message.reply_text(
+            "❌ Нет зарегистрированных учеников.\n"
+            "Попроси учеников написать боту `/start`"
+        )
         return
     
-    try:
-        parts = update.message.text.split(maxsplit=3)
-        if len(parts) < 3:
-            await update.message.reply_text("❌ Неверный формат. Пример: `29.08 17:00 Иван Производная`")
+    keyboard = get_students_keyboard()
+    await update.message.reply_text(
+        "👤 *Выбери ученика:*",
+        reply_markup=keyboard,
+        parse_mode='Markdown'
+    )
+    context.user_data["waiting_for_student"] = True
+
+async def select_student(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    data = query.data
+    
+    if data == "cancel_add":
+        await query.edit_message_text("❌ Добавление отменено")
+        context.user_data.clear()
+        return
+    
+    if data.startswith("student_"):
+        parts = data.split("_")
+        student_id = parts[1]
+        student_name = "_".join(parts[2:])
+        
+        context.user_data["selected_student"] = {
+            "id": student_id,
+            "name": student_name
+        }
+        
+        await query.edit_message_text(
+            f"👤 Ученик: *{student_name}*\n\n"
+            "📅 *Выбери дату:*",
+            reply_markup=get_date_keyboard(),
+            parse_mode='Markdown'
+        )
+        context.user_data.pop("waiting_for_student", None)
+
+async def select_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    data = query.data
+    
+    if data == "cancel_add":
+        await query.edit_message_text("❌ Добавление отменено")
+        context.user_data.clear()
+        return
+    
+    if data.startswith("date_"):
+        date_str = data.replace("date_", "")
+        context.user_data["selected_date"] = date_str
+        
+        student_name = context.user_data.get("selected_student", {}).get("name", "Ученик")
+        
+        await query.edit_message_text(
+            f"👤 Ученик: *{student_name}*\n"
+            f"📅 Дата: *{date_str}*\n\n"
+            "🕐 *Выбери час:*",
+            reply_markup=get_time_hours_keyboard(),
+            parse_mode='Markdown'
+        )
+
+async def select_hour(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    data = query.data
+    
+    if data == "cancel_add":
+        await query.edit_message_text("❌ Добавление отменено")
+        context.user_data.clear()
+        return
+    
+    if data.startswith("hour_"):
+        hour = int(data.split("_")[1])
+        context.user_data["selected_hour"] = hour
+        
+        student_name = context.user_data.get("selected_student", {}).get("name", "Ученик")
+        date_str = context.user_data.get("selected_date", "Дата")
+        
+        await query.edit_message_text(
+            f"👤 Ученик: *{student_name}*\n"
+            f"📅 Дата: *{date_str}*\n"
+            f"🕐 Час: *{hour:02d}:XX*\n\n"
+            "🕐 *Выбери минуты:*",
+            reply_markup=get_time_minutes_keyboard(hour),
+            parse_mode='Markdown'
+        )
+
+async def select_minutes(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    data = query.data
+    
+    if data == "cancel_add":
+        await query.edit_message_text("❌ Добавление отменено")
+        context.user_data.clear()
+        return
+    
+    if data.startswith("min_"):
+        parts = data.split("_")
+        hour = int(parts[1])
+        minute = parts[2]
+        time_str = f"{hour:02d}:{minute}"
+        
+        student_data = context.user_data.get("selected_student")
+        date_str = context.user_data.get("selected_date")
+        
+        if not student_data or not date_str:
+            await query.edit_message_text("❌ Ошибка: данные потеряны. Попробуй /add заново")
+            context.user_data.clear()
             return
         
-        date_str, time_str, student = parts[0], parts[1], parts[2]
-        topic = parts[3] if len(parts) > 3 else "-"
-        
-        day, month = map(int, date_str.split('.'))
-        now = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
-        year = now.year
-        if month < now.month:
-            year += 1
-        target_date = datetime.datetime(year, month, day)
-        key = target_date.strftime("%Y-%m-%d")
+        day, month, year = map(int, date_str.split('.'))
+        key = f"{year:04d}-{month:02d}-{day:02d}"
         
         schedule = load_schedule()
         if key not in schedule:
@@ -201,18 +381,21 @@ async def handle_add_lesson(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         schedule[key].append({
             "time": time_str,
-            "student": student,
-            "topic": topic,
-            "user_id": update.effective_user.id
+            "student": student_data["name"],
+            "student_id": student_data["id"],
+            "topic": "-"
         })
         
         save_schedule(schedule)
-        await update.message.reply_text(f"✅ Занятие добавлено!\n📅 {date_str}\n🕐 {time_str}\n👤 {student}\n📚 {topic}")
         
-    except Exception as e:
-        await update.message.reply_text(f"❌ Ошибка: {e}")
-    
-    context.user_data["waiting_for_lesson"] = False
+        await query.edit_message_text(
+            f"✅ *Занятие добавлено!*\n\n"
+            f"👤 Ученик: {student_data['name']}\n"
+            f"📅 Дата: {date_str}\n"
+            f"🕐 Время: {time_str}",
+            parse_mode='Markdown'
+        )
+        context.user_data.clear()
 
 async def delete_lesson(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -262,7 +445,7 @@ async def handle_delete_lesson(update: Update, context: ContextTypes.DEFAULT_TYP
     
     context.user_data["waiting_for_delete"] = False
 
-# ======================== ОБРАБОТКА КНОПОК (С ПРОВЕРКОЙ) ========================
+# ======================== ОБРАБОТКА КНОПОК ========================
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -278,7 +461,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = format_schedule(day_index, 0)
         keyboard = get_day_keyboard(0, day_index)
         
-        # Проверяем, изменилось ли сообщение
         if query.message.text != text or query.message.reply_markup != keyboard:
             await query.edit_message_text(
                 text,
@@ -320,27 +502,32 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     if data == "add_lesson":
-        await query.message.reply_text(
-            "➕ Введи данные в формате:\n"
-            "`29.08 17:00 Иван Производная`",
-            parse_mode='Markdown'
-        )
-        context.user_data["waiting_for_lesson"] = True
+        await add_lesson(update, context)
         return
     
     if data == "delete_lesson":
-        await query.message.reply_text(
-            "🗑 Введи дату и имя:\n"
-            "`29.08 Иван`",
-            parse_mode='Markdown'
-        )
-        context.user_data["waiting_for_delete"] = True
+        await delete_lesson(update, context)
+        return
+    
+    if data.startswith("student_") or data == "cancel_add":
+        await select_student(update, context)
+        return
+    
+    if data.startswith("date_") or data == "cancel_add":
+        await select_date(update, context)
+        return
+    
+    if data.startswith("hour_") or data == "cancel_add":
+        await select_hour(update, context)
+        return
+    
+    if data.startswith("min_") or data == "cancel_add":
+        await select_minutes(update, context)
         return
 
 # ======================== ЗАПУСК ========================
 
 def main():
-    import os
     TOKEN = os.getenv("SCHEDULE_BOT_TOKEN")
     if not TOKEN:
         print("❌ SCHEDULE_BOT_TOKEN не найден!")
@@ -356,12 +543,17 @@ def main():
     
     app.add_handler(CallbackQueryHandler(handle_callback))
     
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_add_lesson))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_delete_lesson))
     
-    job_queue = app.job_queue
-    if job_queue:
-        job_queue.run_repeating(check_reminders, interval=60, first=10)
+    try:
+        job_queue = app.job_queue
+        if job_queue:
+            job_queue.run_repeating(check_reminders, interval=60, first=10)
+            print("✅ Напоминания включены")
+        else:
+            print("ℹ️ JobQueue не доступен")
+    except Exception as e:
+        print(f"⚠️ Ошибка настройки JobQueue: {e}")
     
     print("✅ БОТ РАСПИСАНИЯ ЗАПУЩЕН!")
     app.run_polling()
