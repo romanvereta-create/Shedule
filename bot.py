@@ -1,3 +1,4 @@
+
 import datetime
 import os
 import json
@@ -44,7 +45,7 @@ def get_day_keyboard(week_offset=0, selected_day=0):
     keyboard = [buttons, nav_buttons, action_buttons]
     return InlineKeyboardMarkup(keyboard)
 
-# ======================== ФОРМАТИРОВАНИЕ РАСПИСАНИЯ (КРАСИВО) ========================
+# ======================== ФОРМАТИРОВАНИЕ РАСПИСАНИЯ ========================
 
 def format_schedule(day_index, week_offset=0):
     schedule = load_schedule()
@@ -61,11 +62,9 @@ def format_schedule(day_index, week_offset=0):
     lessons = schedule.get(key, [])
     lessons.sort(key=lambda x: x.get("time", "00:00"))
     
-    # Определяем, сегодня это или нет
     today_key = today.strftime("%Y-%m-%d")
     is_today = key == today_key
     
-    header = "📅"
     if is_today:
         header = "📅 СЕГОДНЯ"
     elif week_offset == 0:
@@ -263,7 +262,7 @@ async def handle_delete_lesson(update: Update, context: ContextTypes.DEFAULT_TYP
     
     context.user_data["waiting_for_delete"] = False
 
-# ======================== ОБРАБОТКА КНОПОК ========================
+# ======================== ОБРАБОТКА КНОПОК (С ПРОВЕРКОЙ) ========================
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -277,11 +276,15 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['selected_day'] = day_index
         context.user_data['week_offset'] = 0
         text = format_schedule(day_index, 0)
-        await query.edit_message_text(
-            text,
-            reply_markup=get_day_keyboard(0, day_index),
-            parse_mode='Markdown'
-        )
+        keyboard = get_day_keyboard(0, day_index)
+        
+        # Проверяем, изменилось ли сообщение
+        if query.message.text != text or query.message.reply_markup != keyboard:
+            await query.edit_message_text(
+                text,
+                reply_markup=keyboard,
+                parse_mode='Markdown'
+            )
         return
     
     if data.startswith("day_"):
@@ -291,11 +294,14 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['selected_day'] = day_index
         context.user_data['week_offset'] = week_offset
         text = format_schedule(day_index, week_offset)
-        await query.edit_message_text(
-            text,
-            reply_markup=get_day_keyboard(week_offset, day_index),
-            parse_mode='Markdown'
-        )
+        keyboard = get_day_keyboard(week_offset, day_index)
+        
+        if query.message.text != text or query.message.reply_markup != keyboard:
+            await query.edit_message_text(
+                text,
+                reply_markup=keyboard,
+                parse_mode='Markdown'
+            )
         return
     
     if data.startswith("week_"):
@@ -303,11 +309,14 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['week_offset'] = week_offset
         day_index = context.user_data.get('selected_day', 0)
         text = format_schedule(day_index, week_offset)
-        await query.edit_message_text(
-            text,
-            reply_markup=get_day_keyboard(week_offset, day_index),
-            parse_mode='Markdown'
-        )
+        keyboard = get_day_keyboard(week_offset, day_index)
+        
+        if query.message.text != text or query.message.reply_markup != keyboard:
+            await query.edit_message_text(
+                text,
+                reply_markup=keyboard,
+                parse_mode='Markdown'
+            )
         return
     
     if data == "add_lesson":
