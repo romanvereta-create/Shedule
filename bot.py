@@ -13,7 +13,11 @@ def auto_install():
                 __import__(package.split("[")[0].replace("-", "_"))
         except ImportError:
             print(f"📦 Устанавливаю {package}...")
-            subprocess.check_call([sys.executable, "-m", "pip", "install", package, "--quiet"])
+            subprocess.check_call(
+                [sys.executable, "-m", "pip", "install", package, "--quiet", "--disable-pip-version-check"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
 
 auto_install()
 
@@ -252,18 +256,35 @@ async def show_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def add_lesson(update: Update, context: ContextTypes.DEFAULT_TYPE):
     students = load_students()
     if not students:
-        await update.message.reply_text(
-            "❌ Нет зарегистрированных учеников.\n"
-            "Попроси учеников написать боту `/start`"
-        )
+        # Отправляем ответ через callback или message
+        if update.callback_query:
+            await update.callback_query.edit_message_text(
+                "❌ Нет зарегистрированных учеников.\n"
+                "Попроси учеников написать боту `/start`"
+            )
+        else:
+            await update.message.reply_text(
+                "❌ Нет зарегистрированных учеников.\n"
+                "Попроси учеников написать боту `/start`"
+            )
         return
     
     keyboard = get_students_keyboard()
-    await update.message.reply_text(
-        "👤 *Выбери ученика:*",
-        reply_markup=keyboard,
-        parse_mode='Markdown'
-    )
+    text = "👤 *Выбери ученика:*"
+    
+    if update.callback_query:
+        await update.callback_query.edit_message_text(
+            text,
+            reply_markup=keyboard,
+            parse_mode='Markdown'
+        )
+    else:
+        await update.message.reply_text(
+            text,
+            reply_markup=keyboard,
+            parse_mode='Markdown'
+        )
+    
     context.user_data["waiting_for_student"] = True
 
 async def select_student(update: Update, context: ContextTypes.DEFAULT_TYPE):
