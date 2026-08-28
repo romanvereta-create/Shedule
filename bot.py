@@ -1,4 +1,4 @@
-import subprocess
+    import subprocess
 import sys
 import os
 
@@ -102,15 +102,12 @@ def get_students_keyboard():
     groups = load_groups()
     buttons = []
     
-    # Ученики
     for student_id, name in students.items():
         buttons.append([InlineKeyboardButton(f"👤 {name}", callback_data=f"student_{student_id}_{name}")])
     
-    # Группы
     for group_name, members in groups.items():
         buttons.append([InlineKeyboardButton(f"👥 {group_name} ({len(members)} чел.)", callback_data=f"group_{group_name}")])
     
-    # Кнопки действий
     buttons.append([InlineKeyboardButton("✏️ Ввести вручную", callback_data="manual_add")])
     buttons.append([InlineKeyboardButton("➕ Создать группу", callback_data="create_group")])
     buttons.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel_add")])
@@ -149,14 +146,6 @@ def get_time_minutes_keyboard(hour):
          InlineKeyboardButton("15", callback_data=f"min_{hour}_15"),
          InlineKeyboardButton("30", callback_data=f"min_{hour}_30"),
          InlineKeyboardButton("45", callback_data=f"min_{hour}_45")],
-        [InlineKeyboardButton("❌ Отмена", callback_data="cancel_add")]
-    ]
-    return InlineKeyboardMarkup(buttons)
-
-def get_repeat_keyboard():
-    buttons = [
-        [InlineKeyboardButton("❌ Только этот день", callback_data="repeat_no")],
-        [InlineKeyboardButton("📅 На все недели семестра", callback_data="repeat_yes")],
         [InlineKeyboardButton("❌ Отмена", callback_data="cancel_add")]
     ]
     return InlineKeyboardMarkup(buttons)
@@ -338,7 +327,6 @@ async def add_lesson(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["waiting_for_student"] = True
 
 async def add_manual(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Добавление ученика вручную через команду /add_manual Имя"""
     try:
         args = context.args
         if not args:
@@ -411,14 +399,12 @@ async def handle_group_members(update: Update, context: ContextTypes.DEFAULT_TYP
     groups = load_groups()
     students = load_students()
     
-    # Добавляем учеников в группу и в общий список
     added = []
     for name in names:
         if name not in groups[group_name]:
             groups[group_name].append(name)
             added.append(name)
         
-        # Если ученика нет в общем списке — добавляем
         exists = False
         for sid, sname in students.items():
             if sname == name:
@@ -586,12 +572,10 @@ async def select_minutes(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.clear()
             return
         
-        # Собираем список учеников
         students_to_add = []
         if group_name:
             groups = load_groups()
             for name in groups.get(group_name, []):
-                # Находим ID ученика
                 students = load_students()
                 for sid, sname in students.items():
                     if sname == name:
@@ -612,7 +596,6 @@ async def select_minutes(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if key not in schedule:
             schedule[key] = []
         
-        # Добавляем занятия для всех учеников
         added_names = []
         for student in students_to_add:
             schedule[key].append({
@@ -712,7 +695,7 @@ async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if data == "settings_inc":
         current = settings.get("reminder_minutes", 60)
-        new_value = min(current + 15, 1440)  # максимум 24 часа
+        new_value = min(current + 15, 1440)
         settings["reminder_minutes"] = new_value
         save_settings(settings)
         await query.edit_message_text(
@@ -725,7 +708,7 @@ async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if data == "settings_dec":
         current = settings.get("reminder_minutes", 60)
-        new_value = max(current - 15, 5)  # минимум 5 минут
+        new_value = max(current - 15, 5)
         settings["reminder_minutes"] = new_value
         save_settings(settings)
         await query.edit_message_text(
@@ -825,7 +808,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     if data.startswith("repeat_"):
-        # Пока пропускаем, для будущего расширения
         await query.edit_message_text("ℹ️ Функция в разработке")
         return
 
@@ -851,21 +833,4 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_callback))
     
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_group_name))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_group_members))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_delete_lesson))
-    
-    try:
-        job_queue = app.job_queue
-        if job_queue:
-            job_queue.run_repeating(check_reminders, interval=60, first=10)
-            print("✅ Напоминания включены")
-        else:
-            print("ℹ️ JobQueue не доступен")
-    except Exception as e:
-        print(f"⚠️ Ошибка настройки JobQueue: {e}")
-    
-    print("✅ БОТ РАСПИСАНИЯ ЗАПУЩЕН!")
-    app.run_polling()
-
-if __name__ == "__main__":
-    main()
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle
