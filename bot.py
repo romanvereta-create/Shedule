@@ -2,7 +2,7 @@ import subprocess
 import sys
 import os
 
-# АВТОУСТАНОВКА БИБЛИОТЕК ПРИ ЗАПУСКЕ
+# АВТОУСТАНОВКА БИБЛИОТЕК
 def auto_install():
     required = ["python-telegram-bot[job-queue]", "pytz"]
     for package in required:
@@ -31,26 +31,46 @@ import pytz
 
 DATA_FILE = "schedule.json"
 STUDENTS_FILE = "students.json"
+GROUPS_FILE = "groups.json"
+SETTINGS_FILE = "settings.json"
+
+def load_json(filename, default=None):
+    if default is None:
+        default = {}
+    if os.path.exists(filename):
+        with open(filename, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return default
+
+def save_json(filename, data):
+    with open(filename, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
 
 def load_schedule():
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    return {}
+    return load_json(DATA_FILE)
 
 def save_schedule(schedule):
-    with open(DATA_FILE, 'w', encoding='utf-8') as f:
-        json.dump(schedule, f, ensure_ascii=False, indent=2)
+    save_json(DATA_FILE, schedule)
 
 def load_students():
-    if os.path.exists(STUDENTS_FILE):
-        with open(STUDENTS_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    return {}
+    return load_json(STUDENTS_FILE)
 
 def save_students(students):
-    with open(STUDENTS_FILE, 'w', encoding='utf-8') as f:
-        json.dump(students, f, ensure_ascii=False, indent=2)
+    save_json(STUDENTS_FILE, students)
+
+def load_groups():
+    return load_json(GROUPS_FILE)
+
+def save_groups(groups):
+    save_json(GROUPS_FILE, groups)
+
+def load_settings():
+    default = {"reminder_minutes": 60}
+    data = load_json(SETTINGS_FILE, default)
+    return data
+
+def save_settings(settings):
+    save_json(SETTINGS_FILE, settings)
 
 # ======================== КНОПКИ ========================
 
@@ -70,7 +90,8 @@ def get_day_keyboard(week_offset=0, selected_day=0):
     
     action_buttons = [
         InlineKeyboardButton("➕ Добавить", callback_data="add_lesson"),
-        InlineKeyboardButton("🗑 Удалить", callback_data="delete_lesson")
+        InlineKeyboardButton("🗑 Удалить", callback_data="delete_lesson"),
+        InlineKeyboardButton("⚙️ Настройки", callback_data="settings")
     ]
     
     keyboard = [buttons, nav_buttons, action_buttons]
@@ -78,14 +99,22 @@ def get_day_keyboard(week_offset=0, selected_day=0):
 
 def get_students_keyboard():
     students = load_students()
-    if not students:
-        return None
-    
+    groups = load_groups()
     buttons = []
-    for student_id, name in students.items():
-        buttons.append([InlineKeyboardButton(name, callback_data=f"student_{student_id}_{name}")])
     
+    # Ученики
+    for student_id, name in students.items():
+        buttons.append([InlineKeyboardButton(f"👤 {name}", callback_data=f"student_{student_id}_{name}")])
+    
+    # Группы
+    for group_name, members in groups.items():
+        buttons.append([InlineKeyboardButton(f"👥 {group_name} ({len(members)} чел.)", callback_data=f"group_{group_name}")])
+    
+    # Кнопки действий
+    buttons.append([InlineKeyboardButton("✏️ Ввести вручную", callback_data="manual_add")])
+    buttons.append([InlineKeyboardButton("➕ Создать группу", callback_data="create_group")])
     buttons.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel_add")])
+    
     return InlineKeyboardMarkup(buttons)
 
 def get_date_keyboard():
@@ -121,6 +150,25 @@ def get_time_minutes_keyboard(hour):
          InlineKeyboardButton("30", callback_data=f"min_{hour}_30"),
          InlineKeyboardButton("45", callback_data=f"min_{hour}_45")],
         [InlineKeyboardButton("❌ Отмена", callback_data="cancel_add")]
+    ]
+    return InlineKeyboardMarkup(buttons)
+
+def get_repeat_keyboard():
+    buttons = [
+        [InlineKeyboardButton("❌ Только этот день", callback_data="repeat_no")],
+        [InlineKeyboardButton("📅 На все недели семестра", callback_data="repeat_yes")],
+        [InlineKeyboardButton("❌ Отмена", callback_data="cancel_add")]
+    ]
+    return InlineKeyboardMarkup(buttons)
+
+def get_settings_keyboard():
+    settings = load_settings()
+    current = settings.get("reminder_minutes", 60)
+    buttons = [
+        [InlineKeyboardButton(f"⏰ Напоминание: {current} мин.", callback_data="settings_show")],
+        [InlineKeyboardButton("➕ Увеличить на 15 мин", callback_data="settings_inc")],
+        [InlineKeyboardButton("➖ Уменьшить на 15 мин", callback_data="settings_dec")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="settings_back")]
     ]
     return InlineKeyboardMarkup(buttons)
 
@@ -170,6 +218,9 @@ def format_schedule(day_index, week_offset=0):
 # ======================== НАПОМИНАНИЯ ========================
 
 async def check_reminders(context: ContextTypes.DEFAULT_TYPE):
+    settings = load_settings()
+    reminder_minutes = settings.get("reminder_minutes", 60)
+    
     schedule = load_schedule()
     now = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
     today_key = now.strftime("%Y-%m-%d")
@@ -181,7 +232,7 @@ async def check_reminders(context: ContextTypes.DEFAULT_TYPE):
             lesson_dt = now.replace(hour=h, minute=m, second=0, microsecond=0)
             diff = (lesson_dt - now).total_seconds() / 60
             
-            if 55 <= diff <= 65:
+            if (reminder_minutes - 5) <= diff <= (reminder_minutes + 5):
                 student = lesson.get("student", "Ученик")
                 topic = lesson.get("topic", "занятие")
                 student_id = lesson.get("student_id")
@@ -190,7 +241,7 @@ async def check_reminders(context: ContextTypes.DEFAULT_TYPE):
                     try:
                         await context.bot.send_message(
                             chat_id=int(student_id),
-                            text=f"⏰ Напоминание!\nЧерез час занятие:\n👤 {student}\n📚 {topic}\n🕐 {lesson_time}"
+                            text=f"⏰ Напоминание!\nЧерез {reminder_minutes} мин. занятие:\n👤 {student}\n📚 {topic}\n🕐 {lesson_time}"
                         )
                     except:
                         pass
@@ -216,7 +267,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📅 Показать расписание: /schedule\n"
         "➕ Добавить занятие: /add\n"
         "🗑 Удалить занятие: /delete\n"
-        "📊 Статистика: /week"
+        "📊 Статистика: /week\n"
+        "⚙️ Настройки: /settings"
     )
 
 async def show_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -255,22 +307,20 @@ async def show_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def add_lesson(update: Update, context: ContextTypes.DEFAULT_TYPE):
     students = load_students()
-    if not students:
-        # Отправляем ответ через callback или message
+    groups = load_groups()
+    
+    if not students and not groups:
+        msg = "❌ Нет зарегистрированных учеников и групп.\n\n"
+        msg += "✏️ Введи имя ученика вручную командой:\n`/add_manual Имя`\n\n"
+        msg += "👥 Или создай группу: /create_group"
         if update.callback_query:
-            await update.callback_query.edit_message_text(
-                "❌ Нет зарегистрированных учеников.\n"
-                "Попроси учеников написать боту `/start`"
-            )
+            await update.callback_query.edit_message_text(msg, parse_mode='Markdown')
         else:
-            await update.message.reply_text(
-                "❌ Нет зарегистрированных учеников.\n"
-                "Попроси учеников написать боту `/start`"
-            )
+            await update.message.reply_text(msg, parse_mode='Markdown')
         return
     
     keyboard = get_students_keyboard()
-    text = "👤 *Выбери ученика:*"
+    text = "👤 *Выбери ученика или группу:*"
     
     if update.callback_query:
         await update.callback_query.edit_message_text(
@@ -287,6 +337,122 @@ async def add_lesson(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     context.user_data["waiting_for_student"] = True
 
+async def add_manual(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Добавление ученика вручную через команду /add_manual Имя"""
+    try:
+        args = context.args
+        if not args:
+            await update.message.reply_text(
+                "✏️ Напиши:\n`/add_manual Имя`\n\n"
+                "Пример: `/add_manual Иванов`",
+                parse_mode='Markdown'
+            )
+            return
+        
+        student_name = " ".join(args)
+        user_id = f"manual_{datetime.datetime.now().timestamp()}"
+        
+        students = load_students()
+        students[user_id] = student_name
+        save_students(students)
+        
+        await update.message.reply_text(f"✅ Ученик *{student_name}* добавлен!\nТеперь его можно выбрать из списка.", parse_mode='Markdown')
+    except Exception as e:
+        await update.message.reply_text(f"❌ Ошибка: {e}")
+
+async def create_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query:
+        await update.callback_query.edit_message_text(
+            "👥 *Создание группы*\n\n"
+            "Введи название группы:\n"
+            "Например: `Математика 10А`",
+            parse_mode='Markdown'
+        )
+        context.user_data["waiting_for_group_name"] = True
+    else:
+        await update.message.reply_text(
+            "👥 *Создание группы*\n\n"
+            "Введи название группы:\n"
+            "Например: `Математика 10А`",
+            parse_mode='Markdown'
+        )
+        context.user_data["waiting_for_group_name"] = True
+
+async def handle_group_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.user_data.get("waiting_for_group_name"):
+        return
+    
+    group_name = update.message.text.strip()
+    groups = load_groups()
+    
+    if group_name in groups:
+        await update.message.reply_text(f"❌ Группа *{group_name}* уже существует!", parse_mode='Markdown')
+        context.user_data.pop("waiting_for_group_name", None)
+        return
+    
+    groups[group_name] = []
+    save_groups(groups)
+    
+    await update.message.reply_text(
+        f"✅ Группа *{group_name}* создана!\n\n"
+        "Теперь добавь учеников в группу.\n"
+        "Введи имена учеников через запятую:\n"
+        "`Иванов, Петров, Сидорова`",
+        parse_mode='Markdown'
+    )
+    context.user_data["waiting_for_group_members"] = group_name
+
+async def handle_group_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    group_name = context.user_data.get("waiting_for_group_members")
+    if not group_name:
+        return
+    
+    names = [name.strip() for name in update.message.text.split(',')]
+    groups = load_groups()
+    students = load_students()
+    
+    # Добавляем учеников в группу и в общий список
+    added = []
+    for name in names:
+        if name not in groups[group_name]:
+            groups[group_name].append(name)
+            added.append(name)
+        
+        # Если ученика нет в общем списке — добавляем
+        exists = False
+        for sid, sname in students.items():
+            if sname == name:
+                exists = True
+                break
+        if not exists:
+            students[f"manual_{datetime.datetime.now().timestamp()}"] = name
+    
+    save_groups(groups)
+    save_students(students)
+    
+    await update.message.reply_text(
+        f"✅ В группу *{group_name}* добавлены:\n{', '.join(added)}",
+        parse_mode='Markdown'
+    )
+    context.user_data.pop("waiting_for_group_members", None)
+
+async def settings_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = get_settings_keyboard()
+    if update.callback_query:
+        await update.callback_query.edit_message_text(
+            "⚙️ *Настройки*\n\n"
+            "Настрой время напоминания:",
+            reply_markup=keyboard,
+            parse_mode='Markdown'
+        )
+    else:
+        await update.message.reply_text(
+            "⚙️ *Настройки*\n\n"
+            "Настрой время напоминания:",
+            reply_markup=keyboard,
+            parse_mode='Markdown'
+        )
+
 async def select_student(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -296,6 +462,32 @@ async def select_student(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "cancel_add":
         await query.edit_message_text("❌ Добавление отменено")
         context.user_data.clear()
+        return
+    
+    if data == "manual_add":
+        await query.edit_message_text(
+            "✏️ Введи имя ученика вручную командой:\n"
+            "`/add_manual Имя`\n\n"
+            "Пример: `/add_manual Иванов`",
+            parse_mode='Markdown'
+        )
+        context.user_data.clear()
+        return
+    
+    if data == "create_group":
+        await create_group(update, context)
+        return
+    
+    if data.startswith("group_"):
+        group_name = data.replace("group_", "")
+        context.user_data["selected_group"] = group_name
+        
+        await query.edit_message_text(
+            f"👥 Группа: *{group_name}*\n\n"
+            "📅 *Выбери дату:*",
+            reply_markup=get_date_keyboard(),
+            parse_mode='Markdown'
+        )
         return
     
     if data.startswith("student_"):
@@ -331,10 +523,10 @@ async def select_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
         date_str = data.replace("date_", "")
         context.user_data["selected_date"] = date_str
         
-        student_name = context.user_data.get("selected_student", {}).get("name", "Ученик")
+        student_name = context.user_data.get("selected_student", {}).get("name", context.user_data.get("selected_group", "Ученик"))
         
         await query.edit_message_text(
-            f"👤 Ученик: *{student_name}*\n"
+            f"👤 Ученик/группа: *{student_name}*\n"
             f"📅 Дата: *{date_str}*\n\n"
             "🕐 *Выбери час:*",
             reply_markup=get_time_hours_keyboard(),
@@ -356,11 +548,11 @@ async def select_hour(update: Update, context: ContextTypes.DEFAULT_TYPE):
         hour = int(data.split("_")[1])
         context.user_data["selected_hour"] = hour
         
-        student_name = context.user_data.get("selected_student", {}).get("name", "Ученик")
+        student_name = context.user_data.get("selected_student", {}).get("name", context.user_data.get("selected_group", "Ученик"))
         date_str = context.user_data.get("selected_date", "Дата")
         
         await query.edit_message_text(
-            f"👤 Ученик: *{student_name}*\n"
+            f"👤 Ученик/группа: *{student_name}*\n"
             f"📅 Дата: *{date_str}*\n"
             f"🕐 Час: *{hour:02d}:XX*\n\n"
             "🕐 *Выбери минуты:*",
@@ -386,10 +578,30 @@ async def select_minutes(update: Update, context: ContextTypes.DEFAULT_TYPE):
         time_str = f"{hour:02d}:{minute}"
         
         student_data = context.user_data.get("selected_student")
+        group_name = context.user_data.get("selected_group")
         date_str = context.user_data.get("selected_date")
         
-        if not student_data or not date_str:
-            await query.edit_message_text("❌ Ошибка: данные потеряны. Попробуй /add заново")
+        if not date_str:
+            await query.edit_message_text("❌ Ошибка: дата не выбрана")
+            context.user_data.clear()
+            return
+        
+        # Собираем список учеников
+        students_to_add = []
+        if group_name:
+            groups = load_groups()
+            for name in groups.get(group_name, []):
+                # Находим ID ученика
+                students = load_students()
+                for sid, sname in students.items():
+                    if sname == name:
+                        students_to_add.append({"id": sid, "name": sname})
+                        break
+        elif student_data:
+            students_to_add.append({"id": student_data["id"], "name": student_data["name"]})
+        
+        if not students_to_add:
+            await query.edit_message_text("❌ Не найдены ученики для добавления")
             context.user_data.clear()
             return
         
@@ -400,18 +612,23 @@ async def select_minutes(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if key not in schedule:
             schedule[key] = []
         
-        schedule[key].append({
-            "time": time_str,
-            "student": student_data["name"],
-            "student_id": student_data["id"],
-            "topic": "-"
-        })
+        # Добавляем занятия для всех учеников
+        added_names = []
+        for student in students_to_add:
+            schedule[key].append({
+                "time": time_str,
+                "student": student["name"],
+                "student_id": student["id"],
+                "topic": "-",
+                "group": group_name if group_name else None
+            })
+            added_names.append(student["name"])
         
         save_schedule(schedule)
         
         await query.edit_message_text(
             f"✅ *Занятие добавлено!*\n\n"
-            f"👤 Ученик: {student_data['name']}\n"
+            f"👤 Ученики: {', '.join(added_names)}\n"
             f"📅 Дата: {date_str}\n"
             f"🕐 Время: {time_str}",
             parse_mode='Markdown'
@@ -465,6 +682,59 @@ async def handle_delete_lesson(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text(f"❌ Ошибка: {e}")
     
     context.user_data["waiting_for_delete"] = False
+
+# ======================== НАСТРОЙКИ ========================
+
+async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    data = query.data
+    settings = load_settings()
+    
+    if data == "settings":
+        await settings_menu(update, context)
+        return
+    
+    if data == "settings_back":
+        await show_schedule(update, context)
+        return
+    
+    if data == "settings_show":
+        current = settings.get("reminder_minutes", 60)
+        await query.edit_message_text(
+            f"⏰ *Текущее время напоминания:* {current} минут\n\n"
+            "Изменить можно кнопками ниже:",
+            reply_markup=get_settings_keyboard(),
+            parse_mode='Markdown'
+        )
+        return
+    
+    if data == "settings_inc":
+        current = settings.get("reminder_minutes", 60)
+        new_value = min(current + 15, 1440)  # максимум 24 часа
+        settings["reminder_minutes"] = new_value
+        save_settings(settings)
+        await query.edit_message_text(
+            f"⏰ *Время напоминания:* {new_value} минут\n\n"
+            "Изменить можно кнопками ниже:",
+            reply_markup=get_settings_keyboard(),
+            parse_mode='Markdown'
+        )
+        return
+    
+    if data == "settings_dec":
+        current = settings.get("reminder_minutes", 60)
+        new_value = max(current - 15, 5)  # минимум 5 минут
+        settings["reminder_minutes"] = new_value
+        save_settings(settings)
+        await query.edit_message_text(
+            f"⏰ *Время напоминания:* {new_value} минут\n\n"
+            "Изменить можно кнопками ниже:",
+            reply_markup=get_settings_keyboard(),
+            parse_mode='Markdown'
+        )
+        return
 
 # ======================== ОБРАБОТКА КНОПОК ========================
 
@@ -530,7 +800,15 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await delete_lesson(update, context)
         return
     
-    if data.startswith("student_") or data == "cancel_add":
+    if data == "settings":
+        await settings_callback(update, context)
+        return
+    
+    if data.startswith("settings"):
+        await settings_callback(update, context)
+        return
+    
+    if data.startswith("student_") or data == "cancel_add" or data == "manual_add" or data == "create_group" or data.startswith("group_"):
         await select_student(update, context)
         return
     
@@ -544,6 +822,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if data.startswith("min_") or data == "cancel_add":
         await select_minutes(update, context)
+        return
+    
+    if data.startswith("repeat_"):
+        # Пока пропускаем, для будущего расширения
+        await query.edit_message_text("ℹ️ Функция в разработке")
         return
 
 # ======================== ЗАПУСК ========================
@@ -560,10 +843,15 @@ def main():
     app.add_handler(CommandHandler("schedule", show_schedule))
     app.add_handler(CommandHandler("week", show_week))
     app.add_handler(CommandHandler("add", add_lesson))
+    app.add_handler(CommandHandler("add_manual", add_manual))
+    app.add_handler(CommandHandler("create_group", create_group))
     app.add_handler(CommandHandler("delete", delete_lesson))
+    app.add_handler(CommandHandler("settings", settings_menu))
     
     app.add_handler(CallbackQueryHandler(handle_callback))
     
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_group_name))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_group_members))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_delete_lesson))
     
     try:
