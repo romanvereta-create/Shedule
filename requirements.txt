@@ -1,0 +1,2 @@
+python-telegram-bot
+pytz==2024.1
