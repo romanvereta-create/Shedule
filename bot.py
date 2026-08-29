@@ -605,7 +605,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         return
         
         if not found:
-            await query.edit_message_text("❌ Ошибка", parse_mode=None)
+            await query.edit_message_text("❌ Ошибка: занятие не найдено", parse_mode=None)
             context.user_data.clear()
         return
     
