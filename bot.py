@@ -41,6 +41,7 @@ DATA_FILE = "schedule.json"
 STUDENTS_FILE = "students.json"
 GROUPS_FILE = "groups.json"
 SETTINGS_FILE = "settings.json"
+SLOTS_FILE = "slots.json"
 
 def load_json(filename, default=None):
     if default is None:
@@ -80,10 +81,24 @@ def load_settings():
 def save_settings(settings):
     save_json(SETTINGS_FILE, settings)
 
+def load_slots():
+    # 9 слотов по умолчанию: 10:00–18:00
+    default_slots = [f"{h:02d}:00" for h in range(10, 19)]
+    data = load_json(SLOTS_FILE, default_slots)
+    # Если файл пустой или не список — создаём
+    if not data or not isinstance(data, list) or len(data) != 9:
+        data = default_slots
+        save_json(SLOTS_FILE, data)
+    return data
+
+def save_slots(slots):
+    save_json(SLOTS_FILE, slots)
+
 # ======================== КНОПКИ ========================
 
 def get_schedule_keyboard(day_index, week_offset=0):
     schedule = load_schedule()
+    slots = load_slots()
     days = ["ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ", "ВС"]
     
     today = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
@@ -93,13 +108,12 @@ def get_schedule_keyboard(day_index, week_offset=0):
     
     lessons = schedule.get(key, [])
     lessons.sort(key=lambda x: x.get("time", "00:00"))
-    
-    all_slots = ["10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00", "18:00"]
     busy_times = [l.get("time") for l in lessons]
     
     buttons = []
     
-    for slot in all_slots:
+    # Слоты
+    for slot in slots:
         if slot in busy_times:
             for idx, lesson in enumerate(lessons):
                 if lesson.get("time") == slot:
@@ -116,6 +130,7 @@ def get_schedule_keyboard(day_index, week_offset=0):
                 callback_data=f"add_slot_{key}_{slot}"
             )])
     
+    # Дни недели
     day_buttons = []
     for i, day in enumerate(days):
         if i == day_index and week_offset == 0:
@@ -123,19 +138,50 @@ def get_schedule_keyboard(day_index, week_offset=0):
         else:
             day_buttons.append(InlineKeyboardButton(day, callback_data=f"day_{i}_{week_offset}"))
     
+    # Навигация
     nav_buttons = [
         InlineKeyboardButton("◀", callback_data=f"week_{week_offset-1}"),
         InlineKeyboardButton("📅 Сегодня", callback_data="today"),
         InlineKeyboardButton("▶", callback_data=f"week_{week_offset+1}")
     ]
     
+    # Действия
     action_buttons = [
-        InlineKeyboardButton("➕ Добавить", callback_data="add_lesson"),
         InlineKeyboardButton("⚙️ Настройки", callback_data="settings")
     ]
     
     keyboard = [day_buttons] + buttons + [nav_buttons] + [action_buttons]
     return InlineKeyboardMarkup(keyboard)
+
+def get_slots_edit_keyboard():
+    """Клавиатура для редактирования слотов"""
+    slots = load_slots()
+    buttons = []
+    for idx, slot in enumerate(slots):
+        buttons.append([InlineKeyboardButton(
+            f"🕐 {slot}",
+            callback_data=f"edit_slot_{idx}"
+        )])
+    buttons.append([InlineKeyboardButton("🔙 Назад", callback_data="settings_back")])
+    return InlineKeyboardMarkup(buttons)
+
+def get_time_picker_keyboard(slot_idx, current_hour):
+    """Выбор нового часа для слота"""
+    buttons = []
+    row = []
+    for h in range(9, 24):
+        # Помечаем текущий час
+        label = f"{h:02d}:00"
+        if h == current_hour:
+            label = f"✅ {label}"
+        row.append(InlineKeyboardButton(label, callback_data=f"slot_hour_{slot_idx}_{h}"))
+        if len(row) == 4:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+    buttons.append([InlineKeyboardButton("❌ Отмена", callback_data="settings_back")])
+    return InlineKeyboardMarkup(buttons)
 
 def get_students_keyboard():
     students = load_students()
@@ -242,8 +288,7 @@ def get_settings_keyboard():
     current = settings.get("reminder_minutes", 60)
     buttons = [
         [InlineKeyboardButton(f"⏰ Напоминание: {current} мин.", callback_data="settings_show")],
-        [InlineKeyboardButton("➖ 5 мин", callback_data="set_dec"), 
-         InlineKeyboardButton("➕ 5 мин", callback_data="set_inc")],
+        [InlineKeyboardButton("🕐 Слоты", callback_data="settings_slots")],
         [InlineKeyboardButton("🔙 Назад", callback_data="settings_back")]
     ]
     return InlineKeyboardMarkup(buttons)
@@ -252,6 +297,7 @@ def get_settings_keyboard():
 
 def format_schedule(day_index, week_offset=0):
     schedule = load_schedule()
+    slots = load_slots()
     days = ["ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ", "ВС"]
     day_name = days[day_index]
     
@@ -327,6 +373,7 @@ async def show_schedule(update_or_query, context, text_prefix=""):
 
 def generate_week_pdf():
     schedule = load_schedule()
+    slots = load_slots()
     today = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
     start_of_week = today - datetime.timedelta(days=today.weekday())
     
@@ -338,7 +385,6 @@ def generate_week_pdf():
         current_date = start_of_week + datetime.timedelta(days=i)
         key = current_date.strftime("%Y-%m-%d")
         date_str = current_date.strftime("%d.%m")
-        
         lessons = schedule.get(key, [])
         lessons.sort(key=lambda x: x.get("time", "00:00"))
         
@@ -518,7 +564,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     commands = [
         BotCommand("schedule", "📅 Расписание на сегодня"),
         BotCommand("week", "📊 Расписание на неделю"),
-        BotCommand("add", "➕ Добавить занятие"),
         BotCommand("settings", "⚙️ Настройки"),
         BotCommand("export", "📄 Экспорт в PDF")
     ]
@@ -560,31 +605,11 @@ async def export_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {e}")
 
-async def add_lesson(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    students = load_students()
-    if not students:
-        msg = "❌ Нет учеников. Нажми 'Ввести вручную' и добавь."
-        if update.callback_query:
-            await update.callback_query.edit_message_text(msg)
-        else:
-            await update.message.reply_text(msg)
-        return
-    
-    keyboard = get_students_keyboard()
-    text = "👤 *Выбери ученика:*"
-    
-    if update.callback_query:
-        await update.callback_query.edit_message_text(text, reply_markup=keyboard, parse_mode='Markdown')
-    else:
-        await update.message.reply_text(text, reply_markup=keyboard, parse_mode='Markdown')
-    
-    context.user_data["waiting_for_student"] = True
-
 async def settings_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = get_settings_keyboard()
     if update.callback_query:
         await update.callback_query.edit_message_text(
-            "⚙️ Настройки\n\nВыбери время напоминания:",
+            "⚙️ Настройки\n\nВыбери действие:",
             reply_markup=keyboard
         )
     else:
@@ -597,6 +622,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     data = query.data
     
+    # Навигация по дням
     if data == "today":
         today = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
         day_index = today.weekday()
@@ -627,6 +653,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(text, reply_markup=keyboard, parse_mode='Markdown')
         return
     
+    # Добавление в слот
     if data.startswith("add_slot_"):
         parts = data.split("_")
         key = parts[2]
@@ -649,6 +676,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["waiting_for_student"] = True
         return
     
+    # Удаление занятия
     if data.startswith("delete_lesson_"):
         parts = data.split("_")
         key = "_".join(parts[2:-1])
@@ -665,6 +693,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("❌ Не найдено")
         return
     
+    # Выбор ученика из списка
     if data.startswith("student_"):
         parts = data.split("_")
         student_id = parts[1]
@@ -703,6 +732,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("waiting_for_student", None)
         return
     
+    # Дата
     if data.startswith("date_"):
         date_str = data.replace("date_", "")
         context.user_data["selected_date"] = date_str
@@ -727,6 +757,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
+    # Часы
     if data.startswith("hour_"):
         hour = int(data.split("_")[1])
         context.user_data["selected_hour"] = hour
@@ -737,6 +768,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
+    # Минуты
     if data.startswith("min_"):
         parts = data.split("_")
         hour = int(parts[1])
@@ -760,6 +792,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
+    # Повтор
     if data.startswith("repeat_"):
         student_data = context.user_data.get("selected_student")
         date_str = context.user_data.get("selected_date")
@@ -826,16 +859,14 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.clear()
             return
     
+    # Отмена
     if data == "cancel_add":
         await query.edit_message_text("❌ Отменено")
         context.user_data.clear()
         await show_schedule(query, context)
         return
     
-    if data == "add_lesson":
-        await add_lesson(update, context)
-        return
-    
+    # Настройки
     if data == "settings":
         await settings_menu(update, context)
         return
@@ -853,28 +884,80 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    if data == "set_inc":
-        settings = load_settings()
-        current = settings.get("reminder_minutes", 60)
-        new_val = min(current + 5, 1440)
-        settings["reminder_minutes"] = new_val
-        save_settings(settings)
+    if data == "settings_slots":
+        keyboard = get_slots_edit_keyboard()
         await query.edit_message_text(
-            f"⏰ Напоминание: {new_val} мин.",
-            reply_markup=get_settings_keyboard()
+            "🕐 *Редактирование слотов*\n\n"
+            "Нажми на слот, чтобы изменить его время.\n"
+            "Всего слотов: 9\n\n"
+            "⚠️ Если изменишь время слота, занятия, "
+            "привязанные к старому времени, НЕ перенесутся "
+            "автоматически! Их нужно будет перенести вручную.",
+            reply_markup=keyboard,
+            parse_mode='Markdown'
         )
         return
     
-    if data == "set_dec":
-        settings = load_settings()
-        current = settings.get("reminder_minutes", 60)
-        new_val = max(current - 5, 5)
-        settings["reminder_minutes"] = new_val
-        save_settings(settings)
-        await query.edit_message_text(
-            f"⏰ Напоминание: {new_val} мин.",
-            reply_markup=get_settings_keyboard()
-        )
+    # Редактирование слота
+    if data.startswith("edit_slot_"):
+        slot_idx = int(data.split("_")[2])
+        slots = load_slots()
+        if slot_idx < len(slots):
+            current_time = slots[slot_idx]
+            hour = int(current_time.split(":")[0])
+            keyboard = get_time_picker_keyboard(slot_idx, hour)
+            await query.edit_message_text(
+                f"🕐 *Выбери новое время для слота #{slot_idx + 1}*\n"
+                f"Текущее: {current_time}",
+                reply_markup=keyboard,
+                parse_mode='Markdown'
+            )
+        return
+    
+    if data.startswith("slot_hour_"):
+        parts = data.split("_")
+        slot_idx = int(parts[2])
+        new_hour = int(parts[3])
+        
+        slots = load_slots()
+        if slot_idx < len(slots):
+            new_time = f"{new_hour:02d}:00"
+            
+            # Проверяем, не занято ли это время другим слотом
+            if new_time in slots and slots.index(new_time) != slot_idx:
+                await query.edit_message_text(
+                    f"❌ Время {new_time} уже занято другим слотом!\n"
+                    f"Выбери другое время.",
+                    reply_markup=get_time_picker_keyboard(slot_idx, int(slots[slot_idx].split(":")[0])),
+                    parse_mode='Markdown'
+                )
+                return
+            
+            old_time = slots[slot_idx]
+            slots[slot_idx] = new_time
+            save_slots(slots)
+            
+            await query.edit_message_text(
+                f"✅ Время слота #{slot_idx + 1} изменено:\n"
+                f"{old_time} → {new_time}\n\n"
+                "⚠️ Проверь расписание — занятия на старом времени остались, "
+                "их нужно перенести вручную!",
+                parse_mode='Markdown'
+            )
+            # Показываем обновлённые слоты в настройках
+            keyboard = get_slots_edit_keyboard()
+            await query.edit_message_text(
+                "🕐 *Редактирование слотов*\n\n"
+                "Нажми на слот, чтобы изменить его время.",
+                reply_markup=keyboard,
+                parse_mode='Markdown'
+            )
+        return
+    
+    # Ручной ввод
+    if data == "manual_add":
+        await query.edit_message_text("✏️ Введи имя ученика:")
+        context.user_data["waiting_for_manual"] = True
         return
     
     if data == "create_group":
@@ -882,11 +965,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["waiting_for_group_name"] = True
         return
     
-    if data == "manual_add":
-        await query.edit_message_text("✏️ Введи имя ученика:")
-        context.user_data["waiting_for_manual"] = True
-        return
-    
+    # Пустые кнопки
     if data == "empty" or data == "weekday" or data == "month_title":
         return
 
@@ -901,7 +980,6 @@ async def handle_manual_input(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("❌ Имя не может быть пустым")
         return
     
-    # Добавляем ученика
     user_id = f"manual_{datetime.datetime.now().timestamp()}"
     students = load_students()
     students[user_id] = name
@@ -910,12 +988,10 @@ async def handle_manual_input(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     await update.message.reply_text(f"✅ {name} добавлен в список!")
     
-    # Проверяем, есть ли выбранный слот
     slot_time = context.user_data.get("selected_slot")
     selected_date = context.user_data.get("selected_date")
     
     if slot_time and selected_date:
-        # Кидаем ученика в слот
         day, month, year = map(int, selected_date.split('.'))
         key = f"{year:04d}-{month:02d}-{day:02d}"
         schedule = load_schedule()
@@ -935,7 +1011,6 @@ async def handle_manual_input(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(f"✅ {name} добавлен на {slot_time}!")
         await show_schedule(update, context)
     else:
-        # Показываем список учеников для выбора
         keyboard = get_students_keyboard()
         await update.message.reply_text(
             "👤 *Теперь выбери ученика для слота:*",
@@ -988,7 +1063,6 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("schedule", show_schedule_command))
     app.add_handler(CommandHandler("week", show_week))
-    app.add_handler(CommandHandler("add", add_lesson))
     app.add_handler(CommandHandler("settings", settings_menu))
     app.add_handler(CommandHandler("export", export_week))
     
