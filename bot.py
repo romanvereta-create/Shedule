@@ -24,7 +24,6 @@ auto_install()
 
 import datetime
 import json
-import re
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 import pytz
@@ -582,8 +581,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     
                     if repeat_type == "year":
                         end_date = datetime.datetime(year, 5, 31)
+                        if start_date > end_date:
+                            end_date = datetime.datetime(year + 1, 5, 31)
                         current = start_date + datetime.timedelta(days=7)
-                        count = 1  # первое занятие уже есть
+                        count = 1
                         while current <= end_date:
                             new_key = current.strftime("%Y-%m-%d")
                             if new_key not in schedule:
@@ -599,7 +600,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             count += 1
                             current += datetime.timedelta(days=7)
                         save_schedule(schedule)
-                        await query.edit_message_text(f"✅ +{count} занятий (до 31 мая)!", parse_mode=None)
+                        await query.edit_message_text(f"✅ +{count} занятий (до 31 мая {end_date.year})!", parse_mode=None)
                         await show_schedule(query, context)
                         context.user_data.clear()
                         return
@@ -716,6 +717,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if data == "repeat_year":
             end_date = datetime.datetime(year, 5, 31)
+            if start_date > end_date:
+                end_date = datetime.datetime(year + 1, 5, 31)
             current = start_date
             count = 0
             while current <= end_date:
@@ -723,7 +726,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 count += 1
                 current += datetime.timedelta(days=7)
             save_schedule(schedule)
-            await query.edit_message_text(f"✅ +{count} занятий (до 31 мая)!", parse_mode=None)
+            await query.edit_message_text(f"✅ +{count} занятий (до 31 мая {end_date.year})!", parse_mode=None)
             await show_schedule(query, context)
             context.user_data.clear()
             return
