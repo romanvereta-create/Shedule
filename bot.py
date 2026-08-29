@@ -24,6 +24,7 @@ auto_install()
 
 import datetime
 import json
+import re
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 import pytz
@@ -71,8 +72,11 @@ def save_groups(groups):
     save_json(GROUPS_FILE, groups)
 
 def load_settings():
-    default = {"reminder_minutes": 60}
+    default = {"reminder_minutes": 60, "zoom_link": ""}
     data = load_json(SETTINGS_FILE, default)
+    if "zoom_link" not in data:
+        data["zoom_link"] = ""
+        save_settings(data)
     return data
 
 def save_settings(settings):
@@ -272,11 +276,24 @@ def get_time_minutes_keyboard(hour):
 def get_settings_keyboard():
     settings = load_settings()
     current = settings.get("reminder_minutes", 60)
+    zoom_link = settings.get("zoom_link", "")
+    zoom_status = "🔗 Есть" if zoom_link else "🔗 Нет"
     buttons = [
         [InlineKeyboardButton(f"⏰ Напоминание: {current} мин.", callback_data="settings_show")],
         [InlineKeyboardButton("🕐 Слоты", callback_data="settings_slots")],
+        [InlineKeyboardButton(zoom_status, callback_data="settings_zoom")],
         [InlineKeyboardButton("🔙 Назад", callback_data="settings_back")]
     ]
+    return InlineKeyboardMarkup(buttons)
+
+def get_zoom_keyboard(zoom_link):
+    buttons = []
+    if zoom_link:
+        buttons.append([InlineKeyboardButton("✏️ Изменить", callback_data="zoom_edit")])
+        buttons.append([InlineKeyboardButton("🗑 Удалить", callback_data="zoom_delete")])
+    else:
+        buttons.append([InlineKeyboardButton("➕ Добавить", callback_data="zoom_add")])
+    buttons.append([InlineKeyboardButton("🔙 Назад", callback_data="settings_back")])
     return InlineKeyboardMarkup(buttons)
 
 def format_schedule(day_index, week_offset=0):
@@ -312,11 +329,7 @@ def format_schedule(day_index, week_offset=0):
     for lesson in lessons:
         time = lesson.get("time", "00:00")
         student = lesson.get("student", "Неизвестно")
-        zoom = lesson.get("zoom_link", "")
-        text += f"🕐 {time} — {student}"
-        if zoom:
-            text += " 🔗"
-        text += "\n"
+        text += f"🕐 {time} — {student}\n"
     
     return text
 
@@ -473,7 +486,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if key not in schedule:
                 schedule[key] = []
             
-            # Проверяем, не занят ли уже слот
             for lesson in schedule[key]:
                 if lesson.get("time") == slot_time:
                     await query.edit_message_text(f"❌ Слот {slot_time} уже занят!", parse_mode=None)
@@ -744,6 +756,39 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
+    # ======================== ZOOM НАСТРОЙКИ ========================
+    
+    if data == "settings_zoom":
+        settings = load_settings()
+        zoom_link = settings.get("zoom_link", "")
+        keyboard = get_zoom_keyboard(zoom_link)
+        
+        if zoom_link:
+            text = f"🔗 Текущая ссылка на Zoom:\n\n{zoom_link}\n\nНажми кнопку ниже, чтобы изменить или удалить."
+        else:
+            text = "🔗 Ссылка на Zoom не установлена.\n\nНажми 'Добавить', чтобы вставить ссылку."
+        
+        await query.edit_message_text(text, reply_markup=keyboard, parse_mode=None, disable_web_page_preview=True)
+        return
+    
+    if data == "zoom_add" or data == "zoom_edit":
+        context.user_data["waiting_for_zoom"] = True
+        await query.edit_message_text(
+            "🔗 Вставь ссылку на Zoom/Meet:\n\n"
+            "Например: https://zoom.us/j/123456789",
+            parse_mode=None
+        )
+        return
+    
+    if data == "zoom_delete":
+        settings = load_settings()
+        settings["zoom_link"] = ""
+        save_settings(settings)
+        await query.edit_message_text("✅ Ссылка удалена!", parse_mode=None)
+        keyboard = get_settings_keyboard()
+        await query.edit_message_text("⚙️ Настройки\n\nВыбери действие:", reply_markup=keyboard, parse_mode=None)
+        return
+    
     if data.startswith("edit_slot_"):
         slot_idx = int(data.split("_")[2])
         slots = load_slots()
@@ -801,6 +846,25 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["waiting_for_group_name"] = True
         return
 
+async def handle_zoom_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.user_data.get("waiting_for_zoom"):
+        return
+    
+    link = update.message.text.strip()
+    if not link:
+        await update.message.reply_text("❌ Ссылка не может быть пустой")
+        return
+    
+    settings = load_settings()
+    settings["zoom_link"] = link
+    save_settings(settings)
+    context.user_data.pop("waiting_for_zoom", None)
+    
+    await update.message.reply_text(f"✅ Ссылка сохранена!\n\n{link}")
+    
+    keyboard = get_settings_keyboard()
+    await update.message.reply_text("⚙️ Настройки", reply_markup=keyboard)
+
 async def handle_manual_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.user_data.get("waiting_for_manual"):
         return
@@ -828,7 +892,6 @@ async def handle_manual_input(update: Update, context: ContextTypes.DEFAULT_TYPE
         if key not in schedule:
             schedule[key] = []
         
-        # Проверяем, не занят ли слот
         for lesson in schedule[key]:
             if lesson.get("time") == slot_time:
                 await update.message.reply_text(f"❌ Слот {slot_time} уже занят!")
@@ -971,6 +1034,7 @@ async def settings_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def check_reminders(context: ContextTypes.DEFAULT_TYPE):
     settings = load_settings()
     reminder_minutes = settings.get("reminder_minutes", 60)
+    zoom_link = settings.get("zoom_link", "")
     
     schedule = load_schedule()
     now = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
@@ -988,16 +1052,16 @@ async def check_reminders(context: ContextTypes.DEFAULT_TYPE):
                     student = lesson.get("student", "Ученик")
                     topic = lesson.get("topic", "занятие")
                     student_id = lesson.get("student_id")
-                    zoom_link = lesson.get("zoom_link", "")
                     
                     if student_id:
                         try:
                             message = f"⏰ Напоминание!\nЧерез {reminder_minutes} мин. занятие:\n👤 {student}\n📚 {topic}\n🕐 {lesson_time}"
                             if zoom_link:
-                                message += f"\n🔗 {zoom_link}"
+                                message += f"\n🔗 Ссылка на Zoom:\n{zoom_link}"
                             await context.bot.send_message(
                                 chat_id=int(student_id),
-                                text=message
+                                text=message,
+                                disable_web_page_preview=True
                             )
                             lesson["reminded"] = True
                             save_schedule(schedule)
@@ -1160,6 +1224,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_manual_input))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_group_name))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_group_members))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_zoom_input))
     
     try:
         job_queue = app.job_queue
