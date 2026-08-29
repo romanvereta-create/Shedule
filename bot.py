@@ -1108,7 +1108,6 @@ def generate_week_pdf():
     week_data = []
     max_lessons = 0
     
-    # Регистрируем шрифт для кириллицы
     if os.path.exists('DejaVuSansCondensed.ttf'):
         pdfmetrics.registerFont(TTFont('DejaVu', 'DejaVuSansCondensed.ttf'))
         font_name = 'DejaVu'
