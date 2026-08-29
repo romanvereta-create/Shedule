@@ -32,6 +32,8 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 from io import BytesIO
 
 DATA_FILE = "schedule.json"
@@ -196,11 +198,12 @@ def get_time_picker_keyboard(key, old_time):
     next_time = f"{next_hour:02d}:{next_min:02d}"
     
     buttons.append([
-        InlineKeyboardButton("➖ 5", callback_data=f"set_time_{key}_{old_time}_{prev_time}"),
+        InlineKeyboardButton("➖ 5", callback_data=f"preview_time_{key}_{old_time}_{prev_time}"),
         InlineKeyboardButton(f"🕐 {old_time}", callback_data="empty"),
-        InlineKeyboardButton("➕ 5", callback_data=f"set_time_{key}_{old_time}_{next_time}")
+        InlineKeyboardButton("➕ 5", callback_data=f"preview_time_{key}_{old_time}_{next_time}")
     ])
     
+    buttons.append([InlineKeyboardButton("✅ Подтвердить", callback_data=f"set_time_{key}_{old_time}_{old_time}")])
     buttons.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel_add")])
     return InlineKeyboardMarkup(buttons)
 
@@ -322,6 +325,20 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['week_offset'] = week_offset
         day_index = context.user_data.get('selected_day', 0)
         await show_schedule(query, context)
+        return
+    
+    if data.startswith("preview_time_"):
+        parts = data.split("_")
+        key = parts[2]
+        old_time = "_".join(parts[3:-1])
+        new_time = parts[-1]
+        
+        keyboard = get_time_picker_keyboard(key, new_time)
+        await query.edit_message_text(
+            f"🕐 Выбери время для {new_time}:",
+            reply_markup=keyboard,
+            parse_mode=None
+        )
         return
     
     if data.startswith("add_slot_"):
@@ -1091,6 +1108,13 @@ def generate_week_pdf():
     week_data = []
     max_lessons = 0
     
+    # Регистрируем шрифт для кириллицы
+    if os.path.exists('DejaVuSansCondensed.ttf'):
+        pdfmetrics.registerFont(TTFont('DejaVu', 'DejaVuSansCondensed.ttf'))
+        font_name = 'DejaVu'
+    else:
+        font_name = 'Helvetica'
+    
     for i, day in enumerate(days):
         current_date = start_of_week + datetime.timedelta(days=i)
         key = current_date.strftime("%Y-%m-%d")
@@ -1147,7 +1171,8 @@ def generate_week_pdf():
         parent=styles['Title'],
         fontSize=16,
         alignment=TA_CENTER,
-        spaceAfter=20
+        spaceAfter=20,
+        fontName=font_name
     )
     
     header_style = ParagraphStyle(
@@ -1155,7 +1180,7 @@ def generate_week_pdf():
         parent=styles['Normal'],
         fontSize=10,
         alignment=TA_CENTER,
-        fontName='Helvetica-Bold',
+        fontName=font_name + '-Bold',
         textColor=colors.white,
         backColor=colors.grey,
         spaceAfter=2,
@@ -1167,6 +1192,7 @@ def generate_week_pdf():
         parent=styles['Normal'],
         fontSize=8,
         alignment=TA_CENTER,
+        fontName=font_name,
         spaceAfter=1,
         spaceBefore=1
     )
@@ -1201,9 +1227,9 @@ def generate_week_pdf():
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTNAME', (0, 0), (-1, 0), font_name + '-Bold'),
         ('FONTSIZE', (0, 0), (-1, 0), 10),
-        ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+        ('FONTNAME', (0, 1), (-1, -1), font_name),
         ('FONTSIZE', (0, 1), (-1, -1), 8),
         ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
         ('TOPPADDING', (0, 0), (-1, 0), 6),
