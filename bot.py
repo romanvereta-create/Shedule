@@ -382,7 +382,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_schedule(query, context)
             return
         
-        # Редактирование ученика через клик на имя
         schedule = load_schedule()
         key = context.user_data.get("edit_student_key")
         time = context.user_data.get("edit_student_time")
@@ -476,23 +475,29 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         old_time = "_".join(parts[3:-1])
         new_time = parts[-1]
         
-        schedule = load_schedule()
-        if key in schedule:
-            for lesson in schedule[key]:
-                if lesson.get("time") == old_time:
-                    # Проверяем, не занято ли новое время
-                    for l in schedule[key]:
-                        if l.get("time") == new_time and l != lesson:
-                            await query.edit_message_text(f"❌ Время {new_time} уже занято!", parse_mode=None)
-                            return
-                    lesson["time"] = new_time
-                    schedule[key] = sorted(schedule[key], key=lambda x: x.get("time", "00:00"))
-                    save_schedule(schedule)
-                    await query.edit_message_text(f"✅ Время изменено: {old_time} → {new_time}", parse_mode=None)
-                    await show_schedule(query, context)
-                    return
-        
-        await query.edit_message_text("❌ Занятие не найдено", parse_mode=None)
+        slots = load_slots()
+        if old_time in slots:
+            if new_time in slots and new_time != old_time:
+                await query.edit_message_text(f"❌ Время {new_time} уже существует!", parse_mode=None)
+                return
+            idx = slots.index(old_time)
+            slots[idx] = new_time
+            slots = sorted(slots)
+            save_slots(slots)
+            
+            schedule = load_schedule()
+            if key in schedule:
+                for lesson in schedule[key]:
+                    if lesson.get("time") == old_time:
+                        lesson["time"] = new_time
+                schedule[key] = sorted(schedule[key], key=lambda x: x.get("time", "00:00"))
+                save_schedule(schedule)
+            
+            await query.edit_message_text(f"✅ Время изменено: {old_time} → {new_time}", parse_mode=None)
+            await show_schedule(query, context)
+            return
+        else:
+            await query.edit_message_text("❌ Время не найдено", parse_mode=None)
         return
     
     if data.startswith("edit_student_"):
