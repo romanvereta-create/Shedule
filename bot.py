@@ -87,10 +87,10 @@ def load_slots():
     if not data or not isinstance(data, list) or len(data) != 9:
         data = default_slots
         save_json(SLOTS_FILE, data)
-    return sorted(data)  # Всегда сортируем
+    return sorted(data)
 
 def save_slots(slots):
-    save_json(SLOTS_FILE, sorted(slots))  # Сохраняем отсортированными
+    save_json(SLOTS_FILE, sorted(slots))
 
 # ======================== КНОПКИ ========================
 
@@ -129,7 +129,7 @@ def get_schedule_keyboard(day_index, week_offset=0):
     
     day_buttons = []
     for i, day in enumerate(days):
-        if i == day_index and week_offset == 0:
+        if i == day_index:
             day_buttons.append(InlineKeyboardButton(f"✅{day}", callback_data=f"day_{i}_{week_offset}"))
         else:
             day_buttons.append(InlineKeyboardButton(day, callback_data=f"day_{i}_{week_offset}"))
@@ -329,12 +329,11 @@ def format_schedule(day_index, week_offset=0):
 
 async def show_schedule(update_or_query, context, text_prefix=""):
     today = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
-    day_index = today.weekday()
-    context.user_data['selected_day'] = day_index
-    context.user_data['week_offset'] = 0
+    day_index = context.user_data.get('selected_day', today.weekday())
+    week_offset = context.user_data.get('week_offset', 0)
     
-    text = format_schedule(day_index, 0)
-    keyboard = get_schedule_keyboard(day_index, 0)
+    text = format_schedule(day_index, week_offset)
+    keyboard = get_schedule_keyboard(day_index, week_offset)
     
     full_text = f"{text_prefix}\n\n{text}" if text_prefix else text
     
@@ -560,6 +559,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     await context.bot.set_my_commands(commands)
     
+    today = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
+    context.user_data['selected_day'] = today.weekday()
+    context.user_data['week_offset'] = 0
+    
     await show_schedule(update, context)
 
 async def show_schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -742,6 +745,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         key = parts[3]
         slot_time = parts[4]
         
+        schedule = load_schedule()
+        
         if repeat_type == "no":
             await query.edit_message_text("✅ Занятие добавлено!")
             await show_schedule(query, context)
@@ -749,12 +754,13 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         # Находим ученика на этом слоте
-        schedule = load_schedule()
+        found = False
         if key in schedule:
             for lesson in schedule[key]:
                 if lesson.get("time") == slot_time:
                     student_name = lesson.get("student")
                     student_id = lesson.get("student_id")
+                    found = True
                     
                     day, month, year = map(int, key.split('-'))
                     start_date = datetime.datetime(year, month, day)
@@ -811,8 +817,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         context.user_data.clear()
                         return
         
-        await query.edit_message_text("❌ Ошибка: занятие не найдено")
-        context.user_data.clear()
+        if not found:
+            await query.edit_message_text("❌ Ошибка: занятие не найдено")
+            context.user_data.clear()
         return
     
     # Дата
