@@ -569,7 +569,7 @@ async def export_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def add_lesson(update: Update, context: ContextTypes.DEFAULT_TYPE):
     students = load_students()
     if not students:
-        msg = "❌ Нет учеников. Добавь через /add_manual Имя"
+        msg = "❌ Нет учеников. Нажми 'Ввести вручную' и добавь."
         if update.callback_query:
             await update.callback_query.edit_message_text(msg)
         else:
@@ -585,22 +585,6 @@ async def add_lesson(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(text, reply_markup=keyboard, parse_mode='Markdown')
     
     context.user_data["waiting_for_student"] = True
-
-async def add_manual(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        args = context.args
-        if not args:
-            await update.message.reply_text("✏️ /add_manual Имя")
-            return
-        student_name = " ".join(args)
-        user_id = f"manual_{datetime.datetime.now().timestamp()}"
-        students = load_students()
-        students[user_id] = student_name
-        save_students(students)
-        await update.message.reply_text(f"✅ {student_name} добавлен!")
-        await show_schedule(update, context)
-    except Exception as e:
-        await update.message.reply_text(f"❌ Ошибка: {e}")
 
 async def settings_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = get_settings_keyboard()
@@ -661,7 +645,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         students = load_students()
         if not students:
-            await query.edit_message_text("❌ Нет учеников. Добавь через /add_manual")
+            await query.edit_message_text("❌ Нет учеников. Нажми 'Ввести вручную' и добавь.")
             return
         
         keyboard = get_students_keyboard()
@@ -913,12 +897,27 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     if data == "manual_add":
-        await query.edit_message_text("✏️ /add_manual Имя")
-        context.user_data.clear()
+        await query.edit_message_text("✏️ Введи имя ученика:")
+        context.user_data["waiting_for_manual"] = True
         return
     
     if data == "empty" or data == "weekday" or data == "month_title":
         return
+
+# ======================== ОБРАБОТЧИКИ ТЕКСТА ========================
+
+async def handle_manual_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.user_data.get("waiting_for_manual"):
+        return
+    name = update.message.text.strip()
+    if name:
+        user_id = f"manual_{datetime.datetime.now().timestamp()}"
+        students = load_students()
+        students[user_id] = name
+        save_students(students)
+        context.user_data.pop("waiting_for_manual", None)
+        await update.message.reply_text(f"✅ {name} добавлен!")
+        await show_schedule(update, context)
 
 async def handle_group_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.user_data.get("waiting_for_group_name"):
@@ -965,11 +964,11 @@ def main():
     app.add_handler(CommandHandler("schedule", show_schedule_command))
     app.add_handler(CommandHandler("week", show_week))
     app.add_handler(CommandHandler("add", add_lesson))
-    app.add_handler(CommandHandler("add_manual", add_manual))
     app.add_handler(CommandHandler("settings", settings_menu))
     app.add_handler(CommandHandler("export", export_week))
     
     app.add_handler(CallbackQueryHandler(handle_callback))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_manual_input))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_group_name))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_group_members))
     
