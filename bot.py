@@ -174,16 +174,17 @@ def get_students_keyboard():
     
     return InlineKeyboardMarkup(buttons)
 
-def get_time_picker_keyboard(key, old_time):
+def get_time_picker_keyboard(key, current_time):
     buttons = []
+    # Кнопки времени (кратные 5 минутам)
     for h in range(9, 23):
-        time_str = f"{h:02d}:00"
-        row = []
-        row.append(InlineKeyboardButton(time_str, callback_data=f"set_time_{key}_{old_time}_{time_str}"))
-        buttons.append(row)
+        for m in range(0, 60, 5):
+            time_str = f"{h:02d}:{m:02d}"
+            buttons.append([InlineKeyboardButton(time_str, callback_data=f"set_time_{key}_{current_time}_{time_str}")])
     
-    current_hour = int(old_time.split(":")[0])
-    current_min = int(old_time.split(":")[1])
+    # Кнопки +5 и -5 (предпросмотр)
+    current_hour = int(current_time.split(":")[0])
+    current_min = int(current_time.split(":")[1])
     
     prev_min = (current_min - 5) % 60
     prev_hour = current_hour - 1 if current_min - 5 < 0 else current_hour
@@ -198,12 +199,11 @@ def get_time_picker_keyboard(key, old_time):
     next_time = f"{next_hour:02d}:{next_min:02d}"
     
     buttons.append([
-        InlineKeyboardButton("➖ 5", callback_data=f"preview_time_{key}_{old_time}_{prev_time}"),
-        InlineKeyboardButton(f"🕐 {old_time}", callback_data="empty"),
-        InlineKeyboardButton("➕ 5", callback_data=f"preview_time_{key}_{old_time}_{next_time}")
+        InlineKeyboardButton("➖5", callback_data=f"preview_time_{key}_{current_time}_{prev_time}"),
+        InlineKeyboardButton(f"🕐 {current_time}", callback_data="empty"),
+        InlineKeyboardButton("➕5", callback_data=f"preview_time_{key}_{current_time}_{next_time}")
     ])
     
-    buttons.append([InlineKeyboardButton("✅ Подтвердить", callback_data=f"set_time_{key}_{old_time}_{old_time}")])
     buttons.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel_add")])
     return InlineKeyboardMarkup(buttons)
 
@@ -325,6 +325,20 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['week_offset'] = week_offset
         day_index = context.user_data.get('selected_day', 0)
         await show_schedule(query, context)
+        return
+    
+    if data.startswith("preview_time_"):
+        parts = data.split("_")
+        key = parts[2]
+        current_time = "_".join(parts[3:-1])
+        new_time = parts[-1]
+        
+        keyboard = get_time_picker_keyboard(key, new_time)
+        await query.edit_message_text(
+            f"🕐 Выбери время для {new_time}:",
+            reply_markup=keyboard,
+            parse_mode=None
+        )
         return
     
     if data.startswith("add_slot_"):
@@ -592,11 +606,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith("edit_time_"):
         parts = data.split("_")
         key = parts[2]
-        old_time = "_".join(parts[3:])
+        current_time = "_".join(parts[3:])
         
-        keyboard = get_time_picker_keyboard(key, old_time)
+        keyboard = get_time_picker_keyboard(key, current_time)
         await query.edit_message_text(
-            f"🕐 Выбери новое время для {old_time}:",
+            f"🕐 Выбери новое время для {current_time}:",
             reply_markup=keyboard,
             parse_mode=None
         )
@@ -631,20 +645,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         else:
             await query.edit_message_text("❌ Время не найдено", parse_mode=None)
-        return
-    
-    if data.startswith("preview_time_"):
-        parts = data.split("_")
-        key = parts[2]
-        old_time = "_".join(parts[3:-1])
-        new_time = parts[-1]
-        
-        keyboard = get_time_picker_keyboard(key, new_time)
-        await query.edit_message_text(
-            f"🕐 Выбери время для {new_time}:",
-            reply_markup=keyboard,
-            parse_mode=None
-        )
         return
     
     if data.startswith("edit_student_"):
