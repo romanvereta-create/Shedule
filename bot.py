@@ -378,29 +378,39 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.pop("selected_slot", None)
             context.user_data.pop("waiting_for_student", None)
             
-            await query.edit_message_text(f"✅ {student_name} на {slot_time}!")
-            await show_schedule(query, context)
+            buttons = [
+                [InlineKeyboardButton("❌ Только этот день", callback_data=f"repeat_after_no_{key}_{slot_time}")],
+                [InlineKeyboardButton("📅 На месяц", callback_data=f"repeat_after_month_{key}_{slot_time}")],
+                [InlineKeyboardButton("📅 До 31 мая", callback_data=f"repeat_after_year_{key}_{slot_time}")],
+                [InlineKeyboardButton("❌ Отмена", callback_data="cancel_add")]
+            ]
+            await query.edit_message_text(
+                f"✅ {student_name} на {slot_time}!\n\nПовторить?",
+                reply_markup=InlineKeyboardMarkup(buttons),
+                parse_mode=None
+            )
             return
         
-        schedule = load_schedule()
         key = context.user_data.get("edit_student_key")
         time = context.user_data.get("edit_student_time")
         
         if key and time:
+            schedule = load_schedule()
             if key in schedule:
                 for lesson in schedule[key]:
                     if lesson.get("time") == time:
-                        old_student = lesson.get("student")
-                        lesson["student"] = student_name
-                        lesson["student_id"] = student_id
-                        save_schedule(schedule)
+                        buttons = [
+                            [InlineKeyboardButton("🗑 Удалить", callback_data=f"confirm_delete_{key}_{time}")],
+                            [InlineKeyboardButton("🔄 Заменить", callback_data=f"replace_student_{key}_{time}")],
+                            [InlineKeyboardButton("❌ Отмена", callback_data="cancel_add")]
+                        ]
                         await query.edit_message_text(
-                            f"✅ Имя изменено: {old_student} → {student_name}",
+                            f"👤 {lesson.get('student')}\n\nЧто сделать?",
+                            reply_markup=InlineKeyboardMarkup(buttons),
                             parse_mode=None
                         )
-                        await show_schedule(query, context)
-                        context.user_data.pop("edit_student_key", None)
-                        context.user_data.pop("edit_student_time", None)
+                        context.user_data["edit_student_key"] = key
+                        context.user_data["edit_student_time"] = time
                         return
         
         context.user_data["selected_student"] = {"id": student_id, "name": student_name}
@@ -410,6 +420,46 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode=None
         )
         context.user_data.pop("waiting_for_student", None)
+        return
+    
+    if data.startswith("confirm_delete_"):
+        parts = data.split("_")
+        key = parts[2]
+        time = "_".join(parts[3:])
+        
+        schedule = load_schedule()
+        if key in schedule:
+            original_len = len(schedule[key])
+            schedule[key] = [l for l in schedule[key] if l.get("time") != time]
+            if len(schedule[key]) < original_len:
+                if not schedule[key]:
+                    del schedule[key]
+                save_schedule(schedule)
+                context.user_data.pop("edit_student_key", None)
+                context.user_data.pop("edit_student_time", None)
+                await query.edit_message_text("✅ Удалено!", parse_mode=None)
+                await show_schedule(query, context)
+                return
+        
+        await query.edit_message_text("❌ Занятие не найдено", parse_mode=None)
+        return
+    
+    if data.startswith("replace_student_"):
+        parts = data.split("_")
+        key = parts[2]
+        time = "_".join(parts[3:])
+        
+        context.user_data["edit_student_key"] = key
+        context.user_data["edit_student_time"] = time
+        
+        students = load_students()
+        keyboard = get_students_keyboard()
+        await query.edit_message_text(
+            f"👤 Выбери нового ученика для {time}:",
+            reply_markup=keyboard,
+            parse_mode=None
+        )
+        context.user_data["waiting_for_student"] = True
         return
     
     if data.startswith("group_"):
@@ -455,6 +505,86 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(f"✅ Добавлено {added} учеников из группы '{group_name}' на {slot_time}!")
             await show_schedule(query, context)
             return
+    
+    if data.startswith("repeat_after_"):
+        parts = data.split("_")
+        repeat_type = parts[2]
+        key = parts[3]
+        slot_time = parts[4]
+        
+        schedule = load_schedule()
+        
+        if repeat_type == "no":
+            await query.edit_message_text("✅ Занятие добавлено!", parse_mode=None)
+            await show_schedule(query, context)
+            context.user_data.clear()
+            return
+        
+        found = False
+        if key in schedule:
+            for lesson in schedule[key]:
+                if lesson.get("time") == slot_time:
+                    student_name = lesson.get("student")
+                    student_id = lesson.get("student_id")
+                    found = True
+                    
+                    year, month, day = map(int, key.split('-'))
+                    start_date = datetime.datetime(year, month, day)
+                    
+                    if repeat_type == "month":
+                        end_date = start_date + datetime.timedelta(days=28)
+                        current = start_date + datetime.timedelta(days=7)
+                        count = 1
+                        while current <= end_date:
+                            new_key = current.strftime("%Y-%m-%d")
+                            if new_key not in schedule:
+                                schedule[new_key] = []
+                            schedule[new_key].append({
+                                "time": slot_time,
+                                "student": student_name,
+                                "student_id": student_id,
+                                "topic": "-",
+                                "reminded": False,
+                                "zoom_link": ""
+                            })
+                            count += 1
+                            current += datetime.timedelta(days=7)
+                        save_schedule(schedule)
+                        await query.edit_message_text(f"✅ +{count} занятий (месяц)!", parse_mode=None)
+                        await show_schedule(query, context)
+                        context.user_data.clear()
+                        return
+                    
+                    if repeat_type == "year":
+                        end_date = datetime.datetime(year, 5, 31)
+                        if start_date > end_date:
+                            end_date = datetime.datetime(year + 1, 5, 31)
+                        current = start_date + datetime.timedelta(days=7)
+                        count = 1
+                        while current <= end_date:
+                            new_key = current.strftime("%Y-%m-%d")
+                            if new_key not in schedule:
+                                schedule[new_key] = []
+                            schedule[new_key].append({
+                                "time": slot_time,
+                                "student": student_name,
+                                "student_id": student_id,
+                                "topic": "-",
+                                "reminded": False,
+                                "zoom_link": ""
+                            })
+                            count += 1
+                            current += datetime.timedelta(days=7)
+                        save_schedule(schedule)
+                        await query.edit_message_text(f"✅ +{count} занятий (до 31 мая {end_date.year})!", parse_mode=None)
+                        await show_schedule(query, context)
+                        context.user_data.clear()
+                        return
+        
+        if not found:
+            await query.edit_message_text("❌ Ошибка: занятие не найдено", parse_mode=None)
+            context.user_data.clear()
+        return
     
     if data.startswith("edit_time_"):
         parts = data.split("_")
@@ -508,14 +638,23 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["edit_student_key"] = key
         context.user_data["edit_student_time"] = time
         
-        students = load_students()
-        keyboard = get_students_keyboard()
-        await query.edit_message_text(
-            f"👤 Выбери нового ученика для {time}:",
-            reply_markup=keyboard,
-            parse_mode=None
-        )
-        context.user_data["waiting_for_student"] = True
+        schedule = load_schedule()
+        if key in schedule:
+            for lesson in schedule[key]:
+                if lesson.get("time") == time:
+                    buttons = [
+                        [InlineKeyboardButton("🗑 Удалить", callback_data=f"confirm_delete_{key}_{time}")],
+                        [InlineKeyboardButton("🔄 Заменить", callback_data=f"replace_student_{key}_{time}")],
+                        [InlineKeyboardButton("❌ Отмена", callback_data="cancel_add")]
+                    ]
+                    await query.edit_message_text(
+                        f"👤 {lesson.get('student')}\n\nЧто сделать?",
+                        reply_markup=InlineKeyboardMarkup(buttons),
+                        parse_mode=None
+                    )
+                    return
+        
+        await query.edit_message_text("❌ Занятие не найдено", parse_mode=None)
         return
     
     if data.startswith("edit_reminder_"):
@@ -777,8 +916,16 @@ async def handle_manual_input(update: Update, context: ContextTypes.DEFAULT_TYPE
         context.user_data.pop("selected_key", None)
         context.user_data.pop("selected_slot", None)
         
-        await update.message.reply_text(f"✅ {name} на {slot_time}!")
-        await show_schedule(update, context)
+        buttons = [
+            [InlineKeyboardButton("❌ Только этот день", callback_data=f"repeat_after_no_{key}_{slot_time}")],
+            [InlineKeyboardButton("📅 На месяц", callback_data=f"repeat_after_month_{key}_{slot_time}")],
+            [InlineKeyboardButton("📅 До 31 мая", callback_data=f"repeat_after_year_{key}_{slot_time}")],
+            [InlineKeyboardButton("❌ Отмена", callback_data="cancel_add")]
+        ]
+        await update.message.reply_text(
+            f"✅ {name} на {slot_time}!\n\nПовторить?",
+            reply_markup=InlineKeyboardMarkup(buttons)
+        )
     else:
         keyboard = get_students_keyboard()
         await update.message.reply_text(
