@@ -908,7 +908,7 @@ async def handle_manual_input(update: Update, context: ContextTypes.DEFAULT_TYPE
     save_students(students)
     context.user_data.pop("waiting_for_manual", None)
     
-    await update.message.reply_text(f"✅ {name} добавлен на {slot_time}!")
+    await update.message.reply_text(f"✅ {name} добавлен в список!")
     
     # Проверяем, есть ли выбранный слот
     slot_time = context.user_data.get("selected_slot")
