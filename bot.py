@@ -125,10 +125,8 @@ def get_schedule_keyboard(day_index, week_offset=0):
                 row.append(InlineKeyboardButton("🔔✅", callback_data=f"edit_reminder_{key}_{slot}"))
             else:
                 row.append(InlineKeyboardButton("🔕❌", callback_data=f"edit_reminder_{key}_{slot}"))
-            row.append(InlineKeyboardButton("🗑", callback_data=f"delete_lesson_{key}_{slot}"))
         else:
             row.append(InlineKeyboardButton("➕", callback_data=f"add_slot_{key}_{slot}"))
-            row.append(InlineKeyboardButton(" ", callback_data="empty"))
             row.append(InlineKeyboardButton(" ", callback_data="empty"))
         
         buttons.append(row)
@@ -175,20 +173,13 @@ def get_students_keyboard():
     return InlineKeyboardMarkup(buttons)
 
 def get_time_picker_keyboard(key, old_time):
-    """Выбор нового времени для слота — только целые часы, с +5/-5"""
     buttons = []
-    # Кнопки целых часов
-    row = []
     for h in range(9, 23):
         time_str = f"{h:02d}:00"
+        row = []
         row.append(InlineKeyboardButton(time_str, callback_data=f"set_time_{key}_{old_time}_{time_str}"))
-        if len(row) == 3:
-            buttons.append(row)
-            row = []
-    if row:
         buttons.append(row)
     
-    # Кнопки +5 и -5
     current_hour = int(old_time.split(":")[0])
     current_min = int(old_time.split(":")[1])
     
@@ -391,6 +382,28 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_schedule(query, context)
             return
         
+        # Редактирование ученика через клик на имя
+        schedule = load_schedule()
+        key = context.user_data.get("edit_student_key")
+        time = context.user_data.get("edit_student_time")
+        
+        if key and time:
+            if key in schedule:
+                for lesson in schedule[key]:
+                    if lesson.get("time") == time:
+                        old_student = lesson.get("student")
+                        lesson["student"] = student_name
+                        lesson["student_id"] = student_id
+                        save_schedule(schedule)
+                        await query.edit_message_text(
+                            f"✅ Имя изменено: {old_student} → {student_name}",
+                            parse_mode=None
+                        )
+                        await show_schedule(query, context)
+                        context.user_data.pop("edit_student_key", None)
+                        context.user_data.pop("edit_student_time", None)
+                        return
+        
         context.user_data["selected_student"] = {"id": student_id, "name": student_name}
         await query.edit_message_text(
             f"👤 {student_name}\n\n📅 Выбери дату:",
@@ -465,10 +478,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         schedule = load_schedule()
         if key in schedule:
-            for i, lesson in enumerate(schedule[key]):
+            for lesson in schedule[key]:
                 if lesson.get("time") == old_time:
-                    for j, l in enumerate(schedule[key]):
-                        if l.get("time") == new_time and j != i:
+                    # Проверяем, не занято ли новое время
+                    for l in schedule[key]:
+                        if l.get("time") == new_time and l != lesson:
                             await query.edit_message_text(f"❌ Время {new_time} уже занято!", parse_mode=None)
                             return
                     lesson["time"] = new_time
@@ -530,26 +544,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                     await show_schedule(query, context)
                     return
-        
-        await query.edit_message_text("❌ Занятие не найдено", parse_mode=None)
-        return
-    
-    if data.startswith("delete_lesson_"):
-        parts = data.split("_")
-        key = parts[2]
-        time = "_".join(parts[3:])
-        
-        schedule = load_schedule()
-        if key in schedule:
-            original_len = len(schedule[key])
-            schedule[key] = [l for l in schedule[key] if l.get("time") != time]
-            if len(schedule[key]) < original_len:
-                if not schedule[key]:
-                    del schedule[key]
-                save_schedule(schedule)
-                await query.edit_message_text("✅ Удалено!", parse_mode=None)
-                await show_schedule(query, context)
-                return
         
         await query.edit_message_text("❌ Занятие не найдено", parse_mode=None)
         return
