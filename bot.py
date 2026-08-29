@@ -110,13 +110,11 @@ def get_schedule_keyboard(day_index, week_offset=0):
     
     buttons = []
     
-    # Каждый слот — строка кнопок
     for slot in slots:
         row = []
         # Кнопка времени
         row.append(InlineKeyboardButton(slot, callback_data=f"edit_time_{key}_{slot}"))
         
-        # Проверяем, занят ли слот
         lesson = None
         for l in lessons:
             if l.get("time") == slot:
@@ -126,21 +124,23 @@ def get_schedule_keyboard(day_index, week_offset=0):
         if lesson:
             student = lesson.get("student", "Неизвестно")
             reminder = lesson.get("reminder_minutes", 60)
-            # Кнопка имени (самая длинная)
+            # Кнопка имени (длинная)
             row.append(InlineKeyboardButton(student, callback_data=f"edit_student_{key}_{slot}"))
-            # Кнопка колокольчика (короткая)
-            row.append(InlineKeyboardButton("🔔", callback_data=f"edit_reminder_{key}_{slot}"))
-            # Кнопка корзины (короткая)
+            # Кнопка колокольчика с статусом
+            if reminder > 0:
+                row.append(InlineKeyboardButton("🔔✅", callback_data=f"edit_reminder_{key}_{slot}"))
+            else:
+                row.append(InlineKeyboardButton("🔕❌", callback_data=f"edit_reminder_{key}_{slot}"))
+            # Кнопка корзины
             row.append(InlineKeyboardButton("🗑", callback_data=f"delete_lesson_{key}_{slot}"))
         else:
-            # Пустой слот
             row.append(InlineKeyboardButton("➕", callback_data=f"add_slot_{key}_{slot}"))
+            row.append(InlineKeyboardButton(" ", callback_data="empty"))
             row.append(InlineKeyboardButton(" ", callback_data="empty"))
             row.append(InlineKeyboardButton(" ", callback_data="empty"))
         
         buttons.append(row)
     
-    # Дни недели
     day_buttons = []
     for i, day in enumerate(days):
         if i == day_index:
@@ -148,7 +148,6 @@ def get_schedule_keyboard(day_index, week_offset=0):
         else:
             day_buttons.append(InlineKeyboardButton(day, callback_data=f"day_{i}_{week_offset}"))
     
-    # Навигация
     nav_buttons = [
         InlineKeyboardButton("◀", callback_data=f"week_{week_offset-1}"),
         InlineKeyboardButton("📅 Сегодня", callback_data="today"),
