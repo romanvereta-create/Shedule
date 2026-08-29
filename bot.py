@@ -304,20 +304,31 @@ async def show_schedule_message(update_or_query, context, text_prefix=""):
     
     full_text = f"{text_prefix}\n\n{text}" if text_prefix else text
     
+    # Проверяем, что это за объект
     if hasattr(update_or_query, 'callback_query'):
+        # Это callback (пришло от кнопки)
         await update_or_query.callback_query.edit_message_text(
             full_text,
             reply_markup=keyboard,
             parse_mode='Markdown'
         )
     elif hasattr(update_or_query, 'message'):
+        # Это обычное сообщение (команда)
         await update_or_query.message.reply_text(
             full_text,
             reply_markup=keyboard,
             parse_mode='Markdown'
         )
-    else:
+    elif hasattr(update_or_query, 'edit_message_text'):
+        # Это просто query
         await update_or_query.edit_message_text(
+            full_text,
+            reply_markup=keyboard,
+            parse_mode='Markdown'
+        )
+    else:
+        # Если ничего не подошло — отправляем новое сообщение
+        await update_or_query.message.reply_text(
             full_text,
             reply_markup=keyboard,
             parse_mode='Markdown'
