@@ -2,7 +2,6 @@ import subprocess
 import sys
 import os
 
-# АВТОУСТАНОВКА БИБЛИОТЕК
 def auto_install():
     required = ["python-telegram-bot[job-queue]", "pytz", "reportlab"]
     for package in required:
@@ -34,8 +33,6 @@ from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER
 from io import BytesIO
-
-# ======================== ХРАНЕНИЕ ДАННЫХ ========================
 
 DATA_FILE = "schedule.json"
 STUDENTS_FILE = "students.json"
@@ -91,8 +88,6 @@ def load_slots():
 
 def save_slots(slots):
     save_json(SLOTS_FILE, sorted(slots))
-
-# ======================== КНОПКИ ========================
 
 def get_schedule_keyboard(day_index, week_offset=0):
     schedule = load_schedule()
@@ -284,8 +279,6 @@ def get_settings_keyboard():
     ]
     return InlineKeyboardMarkup(buttons)
 
-# ======================== ФОРМАТИРОВАНИЕ ========================
-
 def format_schedule(day_index, week_offset=0):
     schedule = load_schedule()
     slots = load_slots()
@@ -341,25 +334,677 @@ async def show_schedule(update_or_query, context, text_prefix=""):
         await update_or_query.callback_query.edit_message_text(
             full_text,
             reply_markup=keyboard,
-            parse_mode='Markdown'
+            parse_mode=None
         )
     elif hasattr(update_or_query, 'message'):
         await update_or_query.message.reply_text(
             full_text,
             reply_markup=keyboard,
-            parse_mode='Markdown'
+            parse_mode=None
         )
     else:
         try:
             await update_or_query.message.reply_text(
                 full_text,
                 reply_markup=keyboard,
-                parse_mode='Markdown'
+                parse_mode=None
             )
         except:
             pass
 
-# ======================== PDF ЭКСПОРТ ========================
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    
+    if data == "today":
+        today = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
+        day_index = today.weekday()
+        context.user_data['selected_day'] = day_index
+        context.user_data['week_offset'] = 0
+        text = format_schedule(day_index, 0)
+        keyboard = get_schedule_keyboard(day_index, 0)
+        await query.edit_message_text(text, reply_markup=keyboard, parse_mode=None)
+        return
+    
+    if data.startswith("day_"):
+        parts = data.split("_")
+        day_index = int(parts[1])
+        week_offset = int(parts[2])
+        context.user_data['selected_day'] = day_index
+        context.user_data['week_offset'] = week_offset
+        text = format_schedule(day_index, week_offset)
+        keyboard = get_schedule_keyboard(day_index, week_offset)
+        await query.edit_message_text(text, reply_markup=keyboard, parse_mode=None)
+        return
+    
+    if data.startswith("week_"):
+        week_offset = int(data.split("_")[1])
+        context.user_data['week_offset'] = week_offset
+        day_index = context.user_data.get('selected_day', 0)
+        text = format_schedule(day_index, week_offset)
+        keyboard = get_schedule_keyboard(day_index, week_offset)
+        await query.edit_message_text(text, reply_markup=keyboard, parse_mode=None)
+        return
+    
+    if data.startswith("add_slot_"):
+        parts = data.split("_")
+        key = parts[2]
+        slot_time = parts[3]
+        
+        context.user_data["selected_date"] = datetime.datetime.strptime(key, "%Y-%m-%d").strftime("%d.%m.%Y")
+        context.user_data["selected_slot"] = slot_time
+        
+        students = load_students()
+        if not students:
+            await query.edit_message_text("❌ Нет учеников. Нажми 'Ввести вручную' и добавь.", parse_mode=None)
+            return
+        
+        keyboard = get_students_keyboard()
+        await query.edit_message_text(
+            "👤 Выбери ученика:",
+            reply_markup=keyboard,
+            parse_mode=None
+        )
+        context.user_data["waiting_for_student"] = True
+        return
+    
+    if data.startswith("delete_lesson_"):
+        parts = data.split("_")
+        key = "_".join(parts[2:-1])
+        idx = int(parts[-1])
+        schedule = load_schedule()
+        if key in schedule and 0 <= idx < len(schedule[key]):
+            lesson = schedule[key][idx]
+            student = lesson.get("student", "Неизвестно")
+            time = lesson.get("time", "00:00")
+            context.user_data["delete_key"] = key
+            context.user_data["delete_idx"] = idx
+            buttons = [
+                [InlineKeyboardButton("✅ Да, удалить", callback_data="confirm_delete")],
+                [InlineKeyboardButton("❌ Нет", callback_data="cancel_delete")]
+            ]
+            await query.edit_message_text(
+                f"🗑 Удалить занятие?\n\n🕐 {time} — {student}",
+                reply_markup=InlineKeyboardMarkup(buttons),
+                parse_mode=None
+            )
+        else:
+            await query.edit_message_text("❌ Не найдено", parse_mode=None)
+        return
+    
+    if data == "confirm_delete":
+        key = context.user_data.get("delete_key")
+        idx = context.user_data.get("delete_idx")
+        if key is not None and idx is not None:
+            schedule = load_schedule()
+            if key in schedule and 0 <= idx < len(schedule[key]):
+                del schedule[key][idx]
+                if not schedule[key]:
+                    del schedule[key]
+                save_schedule(schedule)
+                context.user_data.pop("delete_key", None)
+                context.user_data.pop("delete_idx", None)
+                await query.edit_message_text("✅ Удалено!", parse_mode=None)
+                await show_schedule(query, context)
+                return
+        await query.edit_message_text("❌ Ошибка", parse_mode=None)
+        return
+    
+    if data == "cancel_delete":
+        context.user_data.pop("delete_key", None)
+        context.user_data.pop("delete_idx", None)
+        await query.edit_message_text("❌ Отменено", parse_mode=None)
+        await show_schedule(query, context)
+        return
+    
+    if data.startswith("student_"):
+        parts = data.split("_")
+        student_id = parts[1]
+        student_name = "_".join(parts[2:])
+        
+        slot_time = context.user_data.get("selected_slot")
+        selected_date = context.user_data.get("selected_date")
+        
+        if slot_time and selected_date:
+            day, month, year = map(int, selected_date.split('.'))
+            key = f"{year:04d}-{month:02d}-{day:02d}"
+            schedule = load_schedule()
+            if key not in schedule:
+                schedule[key] = []
+            
+            # Проверяем, не занят ли уже слот
+            for lesson in schedule[key]:
+                if lesson.get("time") == slot_time:
+                    await query.edit_message_text(f"❌ Слот {slot_time} уже занят!", parse_mode=None)
+                    return
+            
+            schedule[key].append({
+                "time": slot_time,
+                "student": student_name,
+                "student_id": student_id,
+                "topic": "-",
+                "reminded": False,
+                "zoom_link": ""
+            })
+            save_schedule(schedule)
+            context.user_data.pop("selected_slot", None)
+            context.user_data.pop("selected_date", None)
+            
+            buttons = [
+                [InlineKeyboardButton("❌ Только этот день", callback_data=f"repeat_after_no_{key}_{slot_time}")],
+                [InlineKeyboardButton("📅 На месяц", callback_data=f"repeat_after_month_{key}_{slot_time}")],
+                [InlineKeyboardButton("📅 До 31 мая", callback_data=f"repeat_after_year_{key}_{slot_time}")],
+                [InlineKeyboardButton("❌ Отмена", callback_data="cancel_add")]
+            ]
+            await query.edit_message_text(
+                f"✅ {student_name} на {slot_time}!\n\nПовторить занятие?",
+                reply_markup=InlineKeyboardMarkup(buttons),
+                parse_mode=None
+            )
+            return
+        
+        context.user_data["selected_student"] = {"id": student_id, "name": student_name}
+        await query.edit_message_text(
+            f"👤 {student_name}\n\n📅 Выбери дату:",
+            reply_markup=get_date_keyboard(0),
+            parse_mode=None
+        )
+        context.user_data.pop("waiting_for_student", None)
+        return
+    
+    if data.startswith("repeat_after_"):
+        parts = data.split("_")
+        repeat_type = parts[2]
+        key = parts[3]
+        slot_time = parts[4]
+        
+        schedule = load_schedule()
+        
+        if repeat_type == "no":
+            await query.edit_message_text("✅ Занятие добавлено!", parse_mode=None)
+            await show_schedule(query, context)
+            context.user_data.clear()
+            return
+        
+        found = False
+        if key in schedule:
+            for lesson in schedule[key]:
+                if lesson.get("time") == slot_time:
+                    student_name = lesson.get("student")
+                    student_id = lesson.get("student_id")
+                    found = True
+                    
+                    year, month, day = map(int, key.split('-'))
+                    start_date = datetime.datetime(year, month, day)
+                    
+                    if repeat_type == "month":
+                        end_date = start_date + datetime.timedelta(days=28)
+                        current = start_date + datetime.timedelta(days=7)
+                        count = 1
+                        while current <= end_date:
+                            new_key = current.strftime("%Y-%m-%d")
+                            if new_key not in schedule:
+                                schedule[new_key] = []
+                            schedule[new_key].append({
+                                "time": slot_time,
+                                "student": student_name,
+                                "student_id": student_id,
+                                "topic": "-",
+                                "reminded": False,
+                                "zoom_link": ""
+                            })
+                            count += 1
+                            current += datetime.timedelta(days=7)
+                        save_schedule(schedule)
+                        await query.edit_message_text(f"✅ Добавлено {count} занятий (на месяц)!", parse_mode=None)
+                        await show_schedule(query, context)
+                        context.user_data.clear()
+                        return
+                    
+                    if repeat_type == "year":
+                        end_date = datetime.datetime(year, 5, 31)
+                        current = start_date + datetime.timedelta(days=7)
+                        count = 1
+                        while current <= end_date:
+                            new_key = current.strftime("%Y-%m-%d")
+                            if new_key not in schedule:
+                                schedule[new_key] = []
+                            schedule[new_key].append({
+                                "time": slot_time,
+                                "student": student_name,
+                                "student_id": student_id,
+                                "topic": "-",
+                                "reminded": False,
+                                "zoom_link": ""
+                            })
+                            count += 1
+                            current += datetime.timedelta(days=7)
+                        save_schedule(schedule)
+                        await query.edit_message_text(f"✅ Добавлено {count} занятий (до 31 мая)!", parse_mode=None)
+                        await show_schedule(query, context)
+                        context.user_data.clear()
+                        return
+        
+        if not found:
+            await query.edit_message_text("❌ Ошибка: занятие не найдено", parse_mode=None)
+            context.user_data.clear()
+        return
+    
+    if data.startswith("date_"):
+        date_str = data.replace("date_", "")
+        context.user_data["selected_date"] = date_str
+        await query.edit_message_text(
+            "🕐 Выбери час:",
+            reply_markup=get_time_hours_keyboard(),
+            parse_mode=None
+        )
+        return
+    
+    if data.startswith("month_"):
+        if data == "month_today":
+            month_offset = 0
+        else:
+            month_offset = int(data.split("_")[1])
+        context.user_data["month_offset"] = month_offset
+        student_name = context.user_data.get("selected_student", {}).get("name", "Ученик")
+        await query.edit_message_text(
+            f"👤 {student_name}\n\n📅 Выбери дату:",
+            reply_markup=get_date_keyboard(month_offset),
+            parse_mode=None
+        )
+        return
+    
+    if data.startswith("hour_"):
+        hour = int(data.split("_")[1])
+        context.user_data["selected_hour"] = hour
+        await query.edit_message_text(
+            "🕐 Выбери минуты:",
+            reply_markup=get_time_minutes_keyboard(hour),
+            parse_mode=None
+        )
+        return
+    
+    if data.startswith("min_"):
+        parts = data.split("_")
+        hour = int(parts[1])
+        minute = parts[2]
+        time_str = f"{hour:02d}:{minute}"
+        context.user_data["selected_time"] = time_str
+        
+        student = context.user_data.get("selected_student", {}).get("name", "Ученик")
+        date_str = context.user_data.get("selected_date", "Дата")
+        
+        buttons = [
+            [InlineKeyboardButton("❌ Только этот день", callback_data="repeat_no")],
+            [InlineKeyboardButton("📅 На месяц", callback_data="repeat_month")],
+            [InlineKeyboardButton("📅 До 31 мая", callback_data="repeat_year")],
+            [InlineKeyboardButton("❌ Отмена", callback_data="cancel_add")]
+        ]
+        await query.edit_message_text(
+            f"👤 {student}\n📅 {date_str}\n🕐 {time_str}\n\nПовторить?",
+            reply_markup=InlineKeyboardMarkup(buttons),
+            parse_mode=None
+        )
+        return
+    
+    if data.startswith("repeat_"):
+        student_data = context.user_data.get("selected_student")
+        date_str = context.user_data.get("selected_date")
+        time_str = context.user_data.get("selected_time")
+        
+        if not student_data or not date_str or not time_str:
+            await query.edit_message_text("❌ Ошибка", parse_mode=None)
+            context.user_data.clear()
+            return
+        
+        day, month, year = map(int, date_str.split('.'))
+        start_date = datetime.datetime(year, month, day)
+        schedule = load_schedule()
+        
+        def add_lesson(key):
+            if key not in schedule:
+                schedule[key] = []
+            schedule[key].append({
+                "time": time_str,
+                "student": student_data["name"],
+                "student_id": student_data["id"],
+                "topic": "-",
+                "reminded": False,
+                "zoom_link": ""
+            })
+        
+        if data == "repeat_no":
+            add_lesson(start_date.strftime("%Y-%m-%d"))
+            save_schedule(schedule)
+            await query.edit_message_text("✅ Добавлено!", parse_mode=None)
+            await show_schedule(query, context)
+            context.user_data.clear()
+            return
+        
+        if data == "repeat_month":
+            end_date = start_date + datetime.timedelta(days=28)
+            current = start_date
+            count = 0
+            while current <= end_date:
+                add_lesson(current.strftime("%Y-%m-%d"))
+                count += 1
+                current += datetime.timedelta(days=7)
+            save_schedule(schedule)
+            await query.edit_message_text(f"✅ Добавлено {count} занятий!", parse_mode=None)
+            await show_schedule(query, context)
+            context.user_data.clear()
+            return
+        
+        if data == "repeat_year":
+            end_date = datetime.datetime(year, 5, 31)
+            current = start_date
+            count = 0
+            while current <= end_date:
+                add_lesson(current.strftime("%Y-%m-%d"))
+                count += 1
+                current += datetime.timedelta(days=7)
+            save_schedule(schedule)
+            await query.edit_message_text(f"✅ Добавлено {count} занятий (до 31 мая)!", parse_mode=None)
+            await show_schedule(query, context)
+            context.user_data.clear()
+            return
+    
+    if data == "cancel_add":
+        await query.edit_message_text("❌ Отменено", parse_mode=None)
+        context.user_data.clear()
+        await show_schedule(query, context)
+        return
+    
+    if data == "settings":
+        keyboard = get_settings_keyboard()
+        await query.edit_message_text("⚙️ Настройки\n\nВыбери действие:", reply_markup=keyboard, parse_mode=None)
+        return
+    
+    if data == "settings_back":
+        await show_schedule(query, context)
+        return
+    
+    if data == "settings_show":
+        settings = load_settings()
+        current = settings.get("reminder_minutes", 60)
+        await query.edit_message_text(
+            f"⏰ Напоминание: {current} мин.",
+            reply_markup=get_settings_keyboard(),
+            parse_mode=None
+        )
+        return
+    
+    if data == "settings_slots":
+        keyboard = get_slots_edit_keyboard()
+        await query.edit_message_text(
+            "🕐 Редактирование слотов\n\nНажми на слот, чтобы изменить его время.\nВсего слотов: 9",
+            reply_markup=keyboard,
+            parse_mode=None
+        )
+        return
+    
+    if data.startswith("edit_slot_"):
+        slot_idx = int(data.split("_")[2])
+        slots = load_slots()
+        if slot_idx < len(slots):
+            current_time = slots[slot_idx]
+            hour = int(current_time.split(":")[0])
+            keyboard = get_time_picker_keyboard(slot_idx, hour)
+            await query.edit_message_text(
+                f"🕐 Выбери новое время для слота #{slot_idx + 1}\nТекущее: {current_time}",
+                reply_markup=keyboard,
+                parse_mode=None
+            )
+        return
+    
+    if data.startswith("slot_hour_"):
+        parts = data.split("_")
+        slot_idx = int(parts[2])
+        new_hour = int(parts[3])
+        
+        slots = load_slots()
+        if slot_idx < len(slots):
+            new_time = f"{new_hour:02d}:00"
+            
+            if new_time in slots and slots.index(new_time) != slot_idx:
+                await query.edit_message_text(
+                    f"❌ Время {new_time} уже занято другим слотом!\nВыбери другое время.",
+                    reply_markup=get_time_picker_keyboard(slot_idx, int(slots[slot_idx].split(":")[0])),
+                    parse_mode=None
+                )
+                return
+            
+            old_time = slots[slot_idx]
+            slots[slot_idx] = new_time
+            save_slots(slots)
+            
+            await query.edit_message_text(
+                f"✅ Время слота #{slot_idx + 1} изменено:\n{old_time} → {new_time}",
+                parse_mode=None
+            )
+            keyboard = get_slots_edit_keyboard()
+            await query.edit_message_text(
+                "🕐 Редактирование слотов\n\nНажми на слот, чтобы изменить его время.",
+                reply_markup=keyboard,
+                parse_mode=None
+            )
+        return
+    
+    if data == "manual_add":
+        await query.edit_message_text("✏️ Введи имя ученика:", parse_mode=None)
+        context.user_data["waiting_for_manual"] = True
+        return
+    
+    if data == "create_group":
+        await query.edit_message_text("👥 Создание группы\n\nВведи название:", parse_mode=None)
+        context.user_data["waiting_for_group_name"] = True
+        return
+
+async def handle_manual_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.user_data.get("waiting_for_manual"):
+        return
+    
+    name = update.message.text.strip()
+    if not name:
+        await update.message.reply_text("❌ Имя не может быть пустым")
+        return
+    
+    user_id = f"manual_{datetime.datetime.now().timestamp()}"
+    students = load_students()
+    students[user_id] = name
+    save_students(students)
+    context.user_data.pop("waiting_for_manual", None)
+    
+    await update.message.reply_text(f"✅ {name} добавлен в список!")
+    
+    slot_time = context.user_data.get("selected_slot")
+    selected_date = context.user_data.get("selected_date")
+    
+    if slot_time and selected_date:
+        day, month, year = map(int, selected_date.split('.'))
+        key = f"{year:04d}-{month:02d}-{day:02d}"
+        schedule = load_schedule()
+        if key not in schedule:
+            schedule[key] = []
+        
+        # Проверяем, не занят ли слот
+        for lesson in schedule[key]:
+            if lesson.get("time") == slot_time:
+                await update.message.reply_text(f"❌ Слот {slot_time} уже занят!")
+                return
+        
+        schedule[key].append({
+            "time": slot_time,
+            "student": name,
+            "student_id": user_id,
+            "topic": "-",
+            "reminded": False,
+            "zoom_link": ""
+        })
+        save_schedule(schedule)
+        context.user_data.pop("selected_slot", None)
+        context.user_data.pop("selected_date", None)
+        
+        buttons = [
+            [InlineKeyboardButton("❌ Только этот день", callback_data=f"repeat_after_no_{key}_{slot_time}")],
+            [InlineKeyboardButton("📅 На месяц", callback_data=f"repeat_after_month_{key}_{slot_time}")],
+            [InlineKeyboardButton("📅 До 31 мая", callback_data=f"repeat_after_year_{key}_{slot_time}")],
+            [InlineKeyboardButton("❌ Отмена", callback_data="cancel_add")]
+        ]
+        await update.message.reply_text(
+            f"✅ {name} на {slot_time}!\n\nПовторить занятие?",
+            reply_markup=InlineKeyboardMarkup(buttons)
+        )
+    else:
+        keyboard = get_students_keyboard()
+        await update.message.reply_text(
+            "👤 Теперь выбери ученика для слота:",
+            reply_markup=keyboard
+        )
+        context.user_data["waiting_for_student"] = True
+
+async def handle_group_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.user_data.get("waiting_for_group_name"):
+        return
+    group_name = update.message.text.strip()
+    groups = load_groups()
+    if group_name in groups:
+        await update.message.reply_text(f"❌ Группа {group_name} уже есть")
+        context.user_data.pop("waiting_for_group_name", None)
+        return
+    groups[group_name] = []
+    save_groups(groups)
+    await update.message.reply_text(f"✅ Группа {group_name} создана!\nВведи имена через запятую:")
+    context.user_data["waiting_for_group_members"] = group_name
+
+async def handle_group_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    group_name = context.user_data.get("waiting_for_group_members")
+    if not group_name:
+        return
+    names = [n.strip() for n in update.message.text.split(',')]
+    groups = load_groups()
+    students = load_students()
+    for name in names:
+        if name not in groups[group_name]:
+            groups[group_name].append(name)
+        exists = any(s == name for s in students.values())
+        if not exists:
+            students[f"manual_{datetime.datetime.now().timestamp()}"] = name
+    save_groups(groups)
+    save_students(students)
+    await update.message.reply_text(f"✅ Добавлены: {', '.join(names)}")
+    await show_schedule(update, context)
+    context.user_data.pop("waiting_for_group_members", None)
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+    first_name = update.effective_user.first_name or "Пользователь"
+    
+    students = load_students()
+    if user_id not in students:
+        students[user_id] = first_name
+        save_students(students)
+        await update.message.reply_text(f"✅ {first_name}, ты зарегистрирован!")
+    else:
+        await update.message.reply_text(f"👋 С возвращением, {first_name}!")
+    
+    commands = [
+        BotCommand("schedule", "📅 Расписание на сегодня"),
+        BotCommand("week", "📊 Расписание на неделю"),
+        BotCommand("settings", "⚙️ Настройки"),
+        BotCommand("export", "📄 Экспорт в PDF")
+    ]
+    await context.bot.set_my_commands(commands)
+    
+    today = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
+    context.user_data['selected_day'] = today.weekday()
+    context.user_data['week_offset'] = 0
+    
+    await show_schedule(update, context)
+
+async def show_schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await show_schedule(update, context)
+
+async def show_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    days = ["ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ", "ВС"]
+    today = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
+    start_of_week = today - datetime.timedelta(days=today.weekday())
+    
+    text = "📊 РАСПИСАНИЕ НА НЕДЕЛЮ\n\n"
+    total = 0
+    
+    for i, day in enumerate(days):
+        target_date = start_of_week + datetime.timedelta(days=i)
+        key = target_date.strftime("%Y-%m-%d")
+        lessons = load_schedule().get(key, [])
+        count = len(lessons)
+        total += count
+        
+        emoji = "✅" if count > 0 else "⬜"
+        text += f"{emoji} {day} {target_date.strftime('%d.%m')}: {count} занятий\n"
+    
+    text += f"\n📊 Всего: {total} занятий"
+    await update.message.reply_text(text, parse_mode=None)
+
+async def export_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("📄 Генерирую PDF...")
+    try:
+        pdf_buffer = generate_week_pdf()
+        today = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
+        filename = f"расписание_{today.strftime('%d.%m')}.pdf"
+        await update.message.reply_document(document=pdf_buffer, filename=filename)
+    except Exception as e:
+        await update.message.reply_text(f"❌ Ошибка: {e}")
+
+async def settings_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = get_settings_keyboard()
+    if update.callback_query:
+        await update.callback_query.edit_message_text(
+            "⚙️ Настройки\n\nВыбери действие:",
+            reply_markup=keyboard,
+            parse_mode=None
+        )
+    else:
+        await update.message.reply_text("⚙️ Настройки", reply_markup=keyboard)
+
+async def check_reminders(context: ContextTypes.DEFAULT_TYPE):
+    settings = load_settings()
+    reminder_minutes = settings.get("reminder_minutes", 60)
+    
+    schedule = load_schedule()
+    now = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
+    today_key = now.strftime("%Y-%m-%d")
+    
+    for lesson in schedule.get(today_key, []):
+        lesson_time = lesson.get("time", "00:00")
+        try:
+            h, m = map(int, lesson_time.split(":"))
+            lesson_dt = now.replace(hour=h, minute=m, second=0, microsecond=0)
+            diff = (lesson_dt - now).total_seconds() / 60
+            
+            if not lesson.get("reminded", False):
+                if (reminder_minutes - 5) <= diff <= (reminder_minutes + 5):
+                    student = lesson.get("student", "Ученик")
+                    topic = lesson.get("topic", "занятие")
+                    student_id = lesson.get("student_id")
+                    zoom_link = lesson.get("zoom_link", "")
+                    
+                    if student_id:
+                        try:
+                            message = f"⏰ Напоминание!\nЧерез {reminder_minutes} мин. занятие:\n👤 {student}\n📚 {topic}\n🕐 {lesson_time}"
+                            if zoom_link:
+                                message += f"\n🔗 {zoom_link}"
+                            await context.bot.send_message(
+                                chat_id=int(student_id),
+                                text=message
+                            )
+                            lesson["reminded"] = True
+                            save_schedule(schedule)
+                        except:
+                            pass
+        except:
+            pass
 
 def generate_week_pdf():
     schedule = load_schedule()
@@ -496,651 +1141,6 @@ def generate_week_pdf():
     
     buffer.seek(0)
     return buffer
-
-# ======================== НАПОМИНАНИЯ ========================
-
-async def check_reminders(context: ContextTypes.DEFAULT_TYPE):
-    settings = load_settings()
-    reminder_minutes = settings.get("reminder_minutes", 60)
-    
-    schedule = load_schedule()
-    now = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
-    today_key = now.strftime("%Y-%m-%d")
-    
-    for lesson in schedule.get(today_key, []):
-        lesson_time = lesson.get("time", "00:00")
-        try:
-            h, m = map(int, lesson_time.split(":"))
-            lesson_dt = now.replace(hour=h, minute=m, second=0, microsecond=0)
-            diff = (lesson_dt - now).total_seconds() / 60
-            
-            if not lesson.get("reminded", False):
-                if (reminder_minutes - 5) <= diff <= (reminder_minutes + 5):
-                    student = lesson.get("student", "Ученик")
-                    topic = lesson.get("topic", "занятие")
-                    student_id = lesson.get("student_id")
-                    zoom_link = lesson.get("zoom_link", "")
-                    
-                    if student_id:
-                        try:
-                            message = f"⏰ Напоминание!\nЧерез {reminder_minutes} мин. занятие:\n👤 {student}\n📚 {topic}\n🕐 {lesson_time}"
-                            if zoom_link:
-                                message += f"\n🔗 {zoom_link}"
-                            await context.bot.send_message(
-                                chat_id=int(student_id),
-                                text=message
-                            )
-                            lesson["reminded"] = True
-                            save_schedule(schedule)
-                        except:
-                            pass
-        except:
-            pass
-
-# ======================== КОМАНДЫ ========================
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.effective_user.id)
-    first_name = update.effective_user.first_name or "Пользователь"
-    
-    students = load_students()
-    if user_id not in students:
-        students[user_id] = first_name
-        save_students(students)
-        await update.message.reply_text(f"✅ {first_name}, ты зарегистрирован!")
-    else:
-        await update.message.reply_text(f"👋 С возвращением, {first_name}!")
-    
-    commands = [
-        BotCommand("schedule", "📅 Расписание на сегодня"),
-        BotCommand("week", "📊 Расписание на неделю"),
-        BotCommand("settings", "⚙️ Настройки"),
-        BotCommand("export", "📄 Экспорт в PDF")
-    ]
-    await context.bot.set_my_commands(commands)
-    
-    today = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
-    context.user_data['selected_day'] = today.weekday()
-    context.user_data['week_offset'] = 0
-    
-    await show_schedule(update, context)
-
-async def show_schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await show_schedule(update, context)
-
-async def show_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    days = ["ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ", "ВС"]
-    today = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
-    start_of_week = today - datetime.timedelta(days=today.weekday())
-    
-    text = "📊 *РАСПИСАНИЕ НА НЕДЕЛЮ*\n\n"
-    total = 0
-    
-    for i, day in enumerate(days):
-        target_date = start_of_week + datetime.timedelta(days=i)
-        key = target_date.strftime("%Y-%m-%d")
-        lessons = load_schedule().get(key, [])
-        count = len(lessons)
-        total += count
-        
-        emoji = "✅" if count > 0 else "⬜"
-        text += f"{emoji} {day} {target_date.strftime('%d.%m')}: {count} занятий\n"
-    
-    text += f"\n📊 *Всего: {total} занятий*"
-    await update.message.reply_text(text, parse_mode='Markdown')
-
-async def export_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📄 Генерирую PDF...")
-    try:
-        pdf_buffer = generate_week_pdf()
-        today = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
-        filename = f"расписание_{today.strftime('%d.%m')}.pdf"
-        await update.message.reply_document(document=pdf_buffer, filename=filename)
-    except Exception as e:
-        await update.message.reply_text(f"❌ Ошибка: {e}")
-
-async def settings_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = get_settings_keyboard()
-    if update.callback_query:
-        await update.callback_query.edit_message_text(
-            "⚙️ Настройки\n\nВыбери действие:",
-            reply_markup=keyboard
-        )
-    else:
-        await update.message.reply_text("⚙️ Настройки", reply_markup=keyboard)
-
-# ======================== ОБРАБОТКА КНОПОК ========================
-
-async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    data = query.data
-    
-    # Навигация по дням
-    if data == "today":
-        today = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
-        day_index = today.weekday()
-        context.user_data['selected_day'] = day_index
-        context.user_data['week_offset'] = 0
-        text = format_schedule(day_index, 0)
-        keyboard = get_schedule_keyboard(day_index, 0)
-        await query.edit_message_text(text, reply_markup=keyboard, parse_mode='Markdown')
-        return
-    
-    if data.startswith("day_"):
-        parts = data.split("_")
-        day_index = int(parts[1])
-        week_offset = int(parts[2])
-        context.user_data['selected_day'] = day_index
-        context.user_data['week_offset'] = week_offset
-        text = format_schedule(day_index, week_offset)
-        keyboard = get_schedule_keyboard(day_index, week_offset)
-        await query.edit_message_text(text, reply_markup=keyboard, parse_mode='Markdown')
-        return
-    
-    if data.startswith("week_"):
-        week_offset = int(data.split("_")[1])
-        context.user_data['week_offset'] = week_offset
-        day_index = context.user_data.get('selected_day', 0)
-        text = format_schedule(day_index, week_offset)
-        keyboard = get_schedule_keyboard(day_index, week_offset)
-        await query.edit_message_text(text, reply_markup=keyboard, parse_mode='Markdown')
-        return
-    
-    # Добавление в слот
-    if data.startswith("add_slot_"):
-        parts = data.split("_")
-        key = parts[2]
-        slot_time = parts[3]
-        
-        context.user_data["selected_date"] = datetime.datetime.strptime(key, "%Y-%m-%d").strftime("%d.%m.%Y")
-        context.user_data["selected_slot"] = slot_time
-        
-        students = load_students()
-        if not students:
-            await query.edit_message_text("❌ Нет учеников. Нажми 'Ввести вручную' и добавь.")
-            return
-        
-        keyboard = get_students_keyboard()
-        await query.edit_message_text(
-            "👤 *Выбери ученика:*",
-            reply_markup=keyboard,
-            parse_mode='Markdown'
-        )
-        context.user_data["waiting_for_student"] = True
-        return
-    
-    # Удаление занятия
-    if data.startswith("delete_lesson_"):
-        parts = data.split("_")
-        key = "_".join(parts[2:-1])
-        idx = int(parts[-1])
-        schedule = load_schedule()
-        if key in schedule and 0 <= idx < len(schedule[key]):
-            del schedule[key][idx]
-            if not schedule[key]:
-                del schedule[key]
-            save_schedule(schedule)
-            await query.edit_message_text("✅ Удалено!")
-            await show_schedule(query, context)
-        else:
-            await query.edit_message_text("❌ Не найдено")
-        return
-    
-    # Выбор ученика из списка
-    if data.startswith("student_"):
-        parts = data.split("_")
-        student_id = parts[1]
-        student_name = "_".join(parts[2:])
-        
-        slot_time = context.user_data.get("selected_slot")
-        selected_date = context.user_data.get("selected_date")
-        
-        if slot_time and selected_date:
-            # Добавляем ученика в слот
-            day, month, year = map(int, selected_date.split('.'))
-            key = f"{year:04d}-{month:02d}-{day:02d}"
-            schedule = load_schedule()
-            if key not in schedule:
-                schedule[key] = []
-            schedule[key].append({
-                "time": slot_time,
-                "student": student_name,
-                "student_id": student_id,
-                "topic": "-",
-                "reminded": False,
-                "zoom_link": ""
-            })
-            save_schedule(schedule)
-            context.user_data.pop("selected_slot", None)
-            context.user_data.pop("selected_date", None)
-            
-            # Спрашиваем про повтор
-            buttons = [
-                [InlineKeyboardButton("❌ Только этот день", callback_data=f"repeat_after_no_{key}_{slot_time}")],
-                [InlineKeyboardButton("📅 На месяц", callback_data=f"repeat_after_month_{key}_{slot_time}")],
-                [InlineKeyboardButton("📅 До 31 мая", callback_data=f"repeat_after_year_{key}_{slot_time}")],
-                [InlineKeyboardButton("❌ Отмена", callback_data="cancel_add")]
-            ]
-            await query.edit_message_text(
-                f"✅ {student_name} на {slot_time}!\n\nПовторить занятие?",
-                reply_markup=InlineKeyboardMarkup(buttons),
-                parse_mode='Markdown'
-            )
-            return
-        
-        context.user_data["selected_student"] = {"id": student_id, "name": student_name}
-        await query.edit_message_text(
-            f"👤 {student_name}\n\n📅 Выбери дату:",
-            reply_markup=get_date_keyboard(0),
-            parse_mode='Markdown'
-        )
-        context.user_data.pop("waiting_for_student", None)
-        return
-    
-    # Повтор после добавления в слот
-    if data.startswith("repeat_after_"):
-        parts = data.split("_")
-        repeat_type = parts[2]  # no, month, year
-        key = parts[3]
-        slot_time = parts[4]
-        
-        schedule = load_schedule()
-        
-        if repeat_type == "no":
-            await query.edit_message_text("✅ Занятие добавлено!")
-            await show_schedule(query, context)
-            context.user_data.clear()
-            return
-        
-        # Находим ученика на этом слоте
-        found = False
-        if key in schedule:
-            for lesson in schedule[key]:
-                if lesson.get("time") == slot_time:
-                    student_name = lesson.get("student")
-                    student_id = lesson.get("student_id")
-                    found = True
-                    
-                    year, month, day = map(int, key.split('-'))
-                    start_date = datetime.datetime(year, month, day)
-                    
-                    if repeat_type == "month":
-                        end_date = start_date + datetime.timedelta(days=28)
-                        current = start_date + datetime.timedelta(days=7)
-                        count = 1
-                        while current <= end_date:
-                            new_key = current.strftime("%Y-%m-%d")
-                            if new_key not in schedule:
-                                schedule[new_key] = []
-                            schedule[new_key].append({
-                                "time": slot_time,
-                                "student": student_name,
-                                "student_id": student_id,
-                                "topic": "-",
-                                "reminded": False,
-                                "zoom_link": ""
-                            })
-                            count += 1
-                            current += datetime.timedelta(days=7)
-                        save_schedule(schedule)
-                        await query.edit_message_text(f"✅ Добавлено {count} занятий (на месяц)!")
-                        await show_schedule(query, context)
-                        context.user_data.clear()
-                        return
-                    
-                    if repeat_type == "year":
-                        end_date = datetime.datetime(year, 5, 31)
-                        current = start_date + datetime.timedelta(days=7)
-                        count = 1
-                        while current <= end_date:
-                            new_key = current.strftime("%Y-%m-%d")
-                            if new_key not in schedule:
-                                schedule[new_key] = []
-                            schedule[new_key].append({
-                                "time": slot_time,
-                                "student": student_name,
-                                "student_id": student_id,
-                                "topic": "-",
-                                "reminded": False,
-                                "zoom_link": ""
-                            })
-                            count += 1
-                            current += datetime.timedelta(days=7)
-                        save_schedule(schedule)
-                        await query.edit_message_text(f"✅ Добавлено {count} занятий (до 31 мая)!")
-                        await show_schedule(query, context)
-                        context.user_data.clear()
-                        return
-        
-        if not found:
-            await query.edit_message_text("❌ Ошибка: занятие не найдено")
-            context.user_data.clear()
-        return
-    
-    # Дата
-    if data.startswith("date_"):
-        date_str = data.replace("date_", "")
-        context.user_data["selected_date"] = date_str
-        await query.edit_message_text(
-            "🕐 *Выбери час:*",
-            reply_markup=get_time_hours_keyboard(),
-            parse_mode='Markdown'
-        )
-        return
-    
-    if data.startswith("month_"):
-        if data == "month_today":
-            month_offset = 0
-        else:
-            month_offset = int(data.split("_")[1])
-        context.user_data["month_offset"] = month_offset
-        student_name = context.user_data.get("selected_student", {}).get("name", "Ученик")
-        await query.edit_message_text(
-            f"👤 {student_name}\n\n📅 Выбери дату:",
-            reply_markup=get_date_keyboard(month_offset),
-            parse_mode='Markdown'
-        )
-        return
-    
-    # Часы
-    if data.startswith("hour_"):
-        hour = int(data.split("_")[1])
-        context.user_data["selected_hour"] = hour
-        await query.edit_message_text(
-            "🕐 *Выбери минуты:*",
-            reply_markup=get_time_minutes_keyboard(hour),
-            parse_mode='Markdown'
-        )
-        return
-    
-    # Минуты
-    if data.startswith("min_"):
-        parts = data.split("_")
-        hour = int(parts[1])
-        minute = parts[2]
-        time_str = f"{hour:02d}:{minute}"
-        context.user_data["selected_time"] = time_str
-        
-        student = context.user_data.get("selected_student", {}).get("name", "Ученик")
-        date_str = context.user_data.get("selected_date", "Дата")
-        
-        buttons = [
-            [InlineKeyboardButton("❌ Только этот день", callback_data="repeat_no")],
-            [InlineKeyboardButton("📅 На месяц", callback_data="repeat_month")],
-            [InlineKeyboardButton("📅 До 31 мая", callback_data="repeat_year")],
-            [InlineKeyboardButton("❌ Отмена", callback_data="cancel_add")]
-        ]
-        await query.edit_message_text(
-            f"👤 {student}\n📅 {date_str}\n🕐 {time_str}\n\nПовторить?",
-            reply_markup=InlineKeyboardMarkup(buttons),
-            parse_mode='Markdown'
-        )
-        return
-    
-    # Повтор (старый вариант)
-    if data.startswith("repeat_"):
-        student_data = context.user_data.get("selected_student")
-        date_str = context.user_data.get("selected_date")
-        time_str = context.user_data.get("selected_time")
-        
-        if not student_data or not date_str or not time_str:
-            await query.edit_message_text("❌ Ошибка")
-            context.user_data.clear()
-            return
-        
-        day, month, year = map(int, date_str.split('.'))
-        start_date = datetime.datetime(year, month, day)
-        schedule = load_schedule()
-        
-        def add_lesson(key):
-            if key not in schedule:
-                schedule[key] = []
-            schedule[key].append({
-                "time": time_str,
-                "student": student_data["name"],
-                "student_id": student_data["id"],
-                "topic": "-",
-                "reminded": False,
-                "zoom_link": ""
-            })
-        
-        if data == "repeat_no":
-            add_lesson(start_date.strftime("%Y-%m-%d"))
-            save_schedule(schedule)
-            await query.edit_message_text("✅ Добавлено!")
-            await show_schedule(query, context)
-            context.user_data.clear()
-            return
-        
-        if data == "repeat_month":
-            end_date = start_date + datetime.timedelta(days=28)
-            current = start_date
-            count = 0
-            while current <= end_date:
-                add_lesson(current.strftime("%Y-%m-%d"))
-                count += 1
-                current += datetime.timedelta(days=7)
-            save_schedule(schedule)
-            await query.edit_message_text(f"✅ Добавлено {count} занятий!")
-            await show_schedule(query, context)
-            context.user_data.clear()
-            return
-        
-        if data == "repeat_year":
-            end_date = datetime.datetime(year, 5, 31)
-            current = start_date
-            count = 0
-            while current <= end_date:
-                add_lesson(current.strftime("%Y-%m-%d"))
-                count += 1
-                current += datetime.timedelta(days=7)
-            save_schedule(schedule)
-            await query.edit_message_text(f"✅ Добавлено {count} занятий (до 31 мая)!")
-            await show_schedule(query, context)
-            context.user_data.clear()
-            return
-    
-    # Отмена
-    if data == "cancel_add":
-        await query.edit_message_text("❌ Отменено")
-        context.user_data.clear()
-        await show_schedule(query, context)
-        return
-    
-    # Настройки
-    if data == "settings":
-        await settings_menu(update, context)
-        return
-    
-    if data == "settings_back":
-        await show_schedule(query, context)
-        return
-    
-    if data == "settings_show":
-        settings = load_settings()
-        current = settings.get("reminder_minutes", 60)
-        await query.edit_message_text(
-            f"⏰ Напоминание: {current} мин.",
-            reply_markup=get_settings_keyboard()
-        )
-        return
-    
-    if data == "settings_slots":
-        keyboard = get_slots_edit_keyboard()
-        await query.edit_message_text(
-            "🕐 *Редактирование слотов*\n\n"
-            "Нажми на слот, чтобы изменить его время.\n"
-            "Всего слотов: 9\n\n"
-            "⚠️ Если изменишь время слота, занятия, "
-            "привязанные к старому времени, НЕ перенесутся "
-            "автоматически! Их нужно будет перенести вручную.",
-            reply_markup=keyboard,
-            parse_mode='Markdown'
-        )
-        return
-    
-    # Редактирование слота
-    if data.startswith("edit_slot_"):
-        slot_idx = int(data.split("_")[2])
-        slots = load_slots()
-        if slot_idx < len(slots):
-            current_time = slots[slot_idx]
-            hour = int(current_time.split(":")[0])
-            keyboard = get_time_picker_keyboard(slot_idx, hour)
-            await query.edit_message_text(
-                f"🕐 *Выбери новое время для слота #{slot_idx + 1}*\n"
-                f"Текущее: {current_time}",
-                reply_markup=keyboard,
-                parse_mode='Markdown'
-            )
-        return
-    
-    if data.startswith("slot_hour_"):
-        parts = data.split("_")
-        slot_idx = int(parts[2])
-        new_hour = int(parts[3])
-        
-        slots = load_slots()
-        if slot_idx < len(slots):
-            new_time = f"{new_hour:02d}:00"
-            
-            if new_time in slots and slots.index(new_time) != slot_idx:
-                await query.edit_message_text(
-                    f"❌ Время {new_time} уже занято другим слотом!\n"
-                    f"Выбери другое время.",
-                    reply_markup=get_time_picker_keyboard(slot_idx, int(slots[slot_idx].split(":")[0])),
-                    parse_mode='Markdown'
-                )
-                return
-            
-            old_time = slots[slot_idx]
-            slots[slot_idx] = new_time
-            save_slots(slots)
-            
-            await query.edit_message_text(
-                f"✅ Время слота #{slot_idx + 1} изменено:\n"
-                f"{old_time} → {new_time}\n\n"
-                "⚠️ Проверь расписание — занятия на старом времени остались, "
-                "их нужно перенести вручную!",
-                parse_mode='Markdown'
-            )
-            keyboard = get_slots_edit_keyboard()
-            await query.edit_message_text(
-                "🕐 *Редактирование слотов*\n\n"
-                "Нажми на слот, чтобы изменить его время.",
-                reply_markup=keyboard,
-                parse_mode='Markdown'
-            )
-        return
-    
-    # Ручной ввод
-    if data == "manual_add":
-        await query.edit_message_text("✏️ Введи имя ученика:")
-        context.user_data["waiting_for_manual"] = True
-        return
-    
-    if data == "create_group":
-        await query.edit_message_text("👥 Создание группы\n\nВведи название:")
-        context.user_data["waiting_for_group_name"] = True
-        return
-    
-    if data == "empty" or data == "weekday" or data == "month_title":
-        return
-
-# ======================== ОБРАБОТЧИКИ ТЕКСТА ========================
-
-async def handle_manual_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.user_data.get("waiting_for_manual"):
-        return
-    
-    name = update.message.text.strip()
-    if not name:
-        await update.message.reply_text("❌ Имя не может быть пустым")
-        return
-    
-    user_id = f"manual_{datetime.datetime.now().timestamp()}"
-    students = load_students()
-    students[user_id] = name
-    save_students(students)
-    context.user_data.pop("waiting_for_manual", None)
-    
-    await update.message.reply_text(f"✅ {name} добавлен в список!")
-    
-    slot_time = context.user_data.get("selected_slot")
-    selected_date = context.user_data.get("selected_date")
-    
-    if slot_time and selected_date:
-        day, month, year = map(int, selected_date.split('.'))
-        key = f"{year:04d}-{month:02d}-{day:02d}"
-        schedule = load_schedule()
-        if key not in schedule:
-            schedule[key] = []
-        schedule[key].append({
-            "time": slot_time,
-            "student": name,
-            "student_id": user_id,
-            "topic": "-",
-            "reminded": False,
-            "zoom_link": ""
-        })
-        save_schedule(schedule)
-        context.user_data.pop("selected_slot", None)
-        context.user_data.pop("selected_date", None)
-        
-        # Спрашиваем про повтор
-        buttons = [
-            [InlineKeyboardButton("❌ Только этот день", callback_data=f"repeat_after_no_{key}_{slot_time}")],
-            [InlineKeyboardButton("📅 На месяц", callback_data=f"repeat_after_month_{key}_{slot_time}")],
-            [InlineKeyboardButton("📅 До 31 мая", callback_data=f"repeat_after_year_{key}_{slot_time}")],
-            [InlineKeyboardButton("❌ Отмена", callback_data="cancel_add")]
-        ]
-        await update.message.reply_text(
-            f"✅ {name} на {slot_time}!\n\nПовторить занятие?",
-            reply_markup=InlineKeyboardMarkup(buttons),
-            parse_mode='Markdown'
-        )
-    else:
-        keyboard = get_students_keyboard()
-        await update.message.reply_text(
-            "👤 *Теперь выбери ученика для слота:*",
-            reply_markup=keyboard,
-            parse_mode='Markdown'
-        )
-        context.user_data["waiting_for_student"] = True
-
-async def handle_group_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.user_data.get("waiting_for_group_name"):
-        return
-    group_name = update.message.text.strip()
-    groups = load_groups()
-    if group_name in groups:
-        await update.message.reply_text(f"❌ Группа {group_name} уже есть")
-        context.user_data.pop("waiting_for_group_name", None)
-        return
-    groups[group_name] = []
-    save_groups(groups)
-    await update.message.reply_text(f"✅ Группа {group_name} создана!\nВведи имена через запятую:")
-    context.user_data["waiting_for_group_members"] = group_name
-
-async def handle_group_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    group_name = context.user_data.get("waiting_for_group_members")
-    if not group_name:
-        return
-    names = [n.strip() for n in update.message.text.split(',')]
-    groups = load_groups()
-    students = load_students()
-    for name in names:
-        if name not in groups[group_name]:
-            groups[group_name].append(name)
-        exists = any(s == name for s in students.values())
-        if not exists:
-            students[f"manual_{datetime.datetime.now().timestamp()}"] = name
-    save_groups(groups)
-    save_students(students)
-    await update.message.reply_text(f"✅ Добавлены: {', '.join(names)}")
-    await show_schedule(update, context)
-    context.user_data.pop("waiting_for_group_members", None)
 
 def main():
     TOKEN = os.getenv("SCHEDULE_BOT_TOKEN")
