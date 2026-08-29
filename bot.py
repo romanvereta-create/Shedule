@@ -762,7 +762,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     student_id = lesson.get("student_id")
                     found = True
                     
-                    day, month, year = map(int, key.split('-'))
+                    year, month, day = map(int, key.split('-'))
                     start_date = datetime.datetime(year, month, day)
                     
                     if repeat_type == "month":
