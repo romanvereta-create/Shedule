@@ -583,7 +583,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if repeat_type == "year":
                         end_date = datetime.datetime(year, 5, 31)
                         current = start_date + datetime.timedelta(days=7)
-                        count = 1
+                        count = 1  # первое занятие уже есть
                         while current <= end_date:
                             new_key = current.strftime("%Y-%m-%d")
                             if new_key not in schedule:
