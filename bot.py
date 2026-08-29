@@ -136,12 +136,12 @@ def get_schedule_keyboard(day_index, week_offset=0):
     
     nav_buttons = [
         InlineKeyboardButton("◀", callback_data=f"week_{week_offset-1}"),
-        InlineKeyboardButton("📅", callback_data="today"),
+        InlineKeyboardButton("📅 Сегодня", callback_data="today"),
         InlineKeyboardButton("▶", callback_data=f"week_{week_offset+1}")
     ]
     
     action_buttons = [
-        InlineKeyboardButton("⚙️", callback_data="settings")
+        InlineKeyboardButton("⚙️ Настройки", callback_data="settings")
     ]
     
     keyboard = [day_buttons] + buttons + [nav_buttons] + [action_buttons]
@@ -155,7 +155,7 @@ def get_slots_edit_keyboard():
             f"🕐 {slot}",
             callback_data=f"edit_slot_{idx}"
         )])
-    buttons.append([InlineKeyboardButton("🔙", callback_data="settings_back")])
+    buttons.append([InlineKeyboardButton("🔙 Назад", callback_data="settings_back")])
     return InlineKeyboardMarkup(buttons)
 
 def get_time_picker_keyboard(slot_idx, current_hour):
@@ -171,7 +171,7 @@ def get_time_picker_keyboard(slot_idx, current_hour):
             row = []
     if row:
         buttons.append(row)
-    buttons.append([InlineKeyboardButton("❌", callback_data="settings_back")])
+    buttons.append([InlineKeyboardButton("❌ Отмена", callback_data="settings_back")])
     return InlineKeyboardMarkup(buttons)
 
 def get_students_keyboard():
@@ -190,8 +190,8 @@ def get_students_keyboard():
         buttons.append([InlineKeyboardButton(f"👥 {group_name}", callback_data=f"group_{group_name}")])
     
     buttons.append([InlineKeyboardButton("✏️ Вручную", callback_data="manual_add")])
-    buttons.append([InlineKeyboardButton("➕ Группа", callback_data="create_group")])
-    buttons.append([InlineKeyboardButton("❌", callback_data="cancel_add")])
+    buttons.append([InlineKeyboardButton("➕ Создать группу", callback_data="create_group")])
+    buttons.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel_add")])
     
     return InlineKeyboardMarkup(buttons)
 
@@ -251,7 +251,7 @@ def get_date_keyboard(month_offset=0):
         InlineKeyboardButton("▶", callback_data=f"month_{month_offset+1}")
     ])
     
-    buttons.append([InlineKeyboardButton("❌", callback_data="cancel_add")])
+    buttons.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel_add")])
     
     return InlineKeyboardMarkup(buttons)
 
@@ -265,7 +265,7 @@ def get_time_hours_keyboard():
             row = []
     if row:
         buttons.append(row)
-    buttons.append([InlineKeyboardButton("❌", callback_data="cancel_add")])
+    buttons.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel_add")])
     return InlineKeyboardMarkup(buttons)
 
 def get_time_minutes_keyboard(hour):
@@ -274,7 +274,7 @@ def get_time_minutes_keyboard(hour):
          InlineKeyboardButton("15", callback_data=f"min_{hour}_15"),
          InlineKeyboardButton("30", callback_data=f"min_{hour}_30"),
          InlineKeyboardButton("45", callback_data=f"min_{hour}_45")],
-        [InlineKeyboardButton("❌", callback_data="cancel_add")]
+        [InlineKeyboardButton("❌ Отмена", callback_data="cancel_add")]
     ]
     return InlineKeyboardMarkup(buttons)
 
@@ -284,10 +284,10 @@ def get_settings_keyboard():
     zoom_link = settings.get("zoom_link", "")
     zoom_status = "🔗 Есть" if zoom_link else "🔗 Нет"
     buttons = [
-        [InlineKeyboardButton(f"⏰ {current}м", callback_data="settings_show")],
+        [InlineKeyboardButton(f"⏰ Напомнить за {current} мин", callback_data="settings_show")],
         [InlineKeyboardButton("🕐 Слоты", callback_data="settings_slots")],
         [InlineKeyboardButton(zoom_status, callback_data="settings_zoom")],
-        [InlineKeyboardButton("🔙", callback_data="settings_back")]
+        [InlineKeyboardButton("🔙 Назад", callback_data="settings_back")]
     ]
     return InlineKeyboardMarkup(buttons)
 
@@ -298,7 +298,7 @@ def get_zoom_keyboard(zoom_link):
         buttons.append([InlineKeyboardButton("🗑 Удалить", callback_data="zoom_delete")])
     else:
         buttons.append([InlineKeyboardButton("➕ Добавить", callback_data="zoom_add")])
-    buttons.append([InlineKeyboardButton("🔙", callback_data="settings_back")])
+    buttons.append([InlineKeyboardButton("🔙 Назад", callback_data="settings_back")])
     return InlineKeyboardMarkup(buttons)
 
 def format_schedule(day_index, week_offset=0):
@@ -472,7 +472,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "cancel_delete":
         context.user_data.pop("delete_key", None)
         context.user_data.pop("delete_idx", None)
-        await query.edit_message_text("❌", parse_mode=None)
+        await query.edit_message_text("❌ Отменено", parse_mode=None)
         await show_schedule(query, context)
         return
     
@@ -509,13 +509,13 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.pop("selected_date", None)
             
             buttons = [
-                [InlineKeyboardButton("Только день", callback_data=f"repeat_after_no_{key}_{slot_time}")],
-                [InlineKeyboardButton("На месяц", callback_data=f"repeat_after_month_{key}_{slot_time}")],
-                [InlineKeyboardButton("До 31 мая", callback_data=f"repeat_after_year_{key}_{slot_time}")],
-                [InlineKeyboardButton("❌", callback_data="cancel_add")]
+                [InlineKeyboardButton("❌ Только этот день", callback_data=f"repeat_after_no_{key}_{slot_time}")],
+                [InlineKeyboardButton("📅 На месяц", callback_data=f"repeat_after_month_{key}_{slot_time}")],
+                [InlineKeyboardButton("📅 До 31 мая", callback_data=f"repeat_after_year_{key}_{slot_time}")],
+                [InlineKeyboardButton("❌ Отмена", callback_data="cancel_add")]
             ]
             await query.edit_message_text(
-                f"✅ {student_name} на {slot_time}!\nПовторить?",
+                f"✅ {student_name} на {slot_time}!\n\nПовторить?",
                 reply_markup=InlineKeyboardMarkup(buttons),
                 parse_mode=None
             )
@@ -523,7 +523,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         context.user_data["selected_student"] = {"id": student_id, "name": student_name}
         await query.edit_message_text(
-            f"👤 {student_name}\n📅 Выбери дату:",
+            f"👤 {student_name}\n\n📅 Выбери дату:",
             reply_markup=get_date_keyboard(0),
             parse_mode=None
         )
@@ -614,7 +614,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         date_str = data.replace("date_", "")
         context.user_data["selected_date"] = date_str
         await query.edit_message_text(
-            "🕐 Час:",
+            "🕐 Выбери час:",
             reply_markup=get_time_hours_keyboard(),
             parse_mode=None
         )
@@ -628,7 +628,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["month_offset"] = month_offset
         student_name = context.user_data.get("selected_student", {}).get("name", "Ученик")
         await query.edit_message_text(
-            f"👤 {student_name}\n📅 Выбери дату:",
+            f"👤 {student_name}\n\n📅 Выбери дату:",
             reply_markup=get_date_keyboard(month_offset),
             parse_mode=None
         )
@@ -638,7 +638,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         hour = int(data.split("_")[1])
         context.user_data["selected_hour"] = hour
         await query.edit_message_text(
-            "🕐 Минуты:",
+            "🕐 Выбери минуты:",
             reply_markup=get_time_minutes_keyboard(hour),
             parse_mode=None
         )
@@ -655,13 +655,13 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         date_str = context.user_data.get("selected_date", "Дата")
         
         buttons = [
-            [InlineKeyboardButton("Только день", callback_data="repeat_no")],
-            [InlineKeyboardButton("На месяц", callback_data="repeat_month")],
-            [InlineKeyboardButton("До 31 мая", callback_data="repeat_year")],
-            [InlineKeyboardButton("❌", callback_data="cancel_add")]
+            [InlineKeyboardButton("❌ Только этот день", callback_data="repeat_no")],
+            [InlineKeyboardButton("📅 На месяц", callback_data="repeat_month")],
+            [InlineKeyboardButton("📅 До 31 мая", callback_data="repeat_year")],
+            [InlineKeyboardButton("❌ Отмена", callback_data="cancel_add")]
         ]
         await query.edit_message_text(
-            f"👤 {student}\n📅 {date_str}\n🕐 {time_str}\nПовторить?",
+            f"👤 {student}\n📅 {date_str}\n🕐 {time_str}\n\nПовторить?",
             reply_markup=InlineKeyboardMarkup(buttons),
             parse_mode=None
         )
@@ -732,14 +732,14 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
     
     if data == "cancel_add":
-        await query.edit_message_text("❌", parse_mode=None)
+        await query.edit_message_text("❌ Отменено", parse_mode=None)
         context.user_data.clear()
         await show_schedule(query, context)
         return
     
     if data == "settings":
         keyboard = get_settings_keyboard()
-        await query.edit_message_text("⚙️", reply_markup=keyboard, parse_mode=None)
+        await query.edit_message_text("⚙️ Настройки\n\nВыбери действие:", reply_markup=keyboard, parse_mode=None)
         return
     
     if data == "settings_back":
@@ -750,7 +750,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         settings = load_settings()
         current = settings.get("reminder_minutes", 60)
         await query.edit_message_text(
-            f"⏰ {current} мин.",
+            f"⏰ Напоминание за {current} мин.",
             reply_markup=get_settings_keyboard(),
             parse_mode=None
         )
@@ -759,7 +759,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "settings_slots":
         keyboard = get_slots_edit_keyboard()
         await query.edit_message_text(
-            "🕐 Слоты (9)",
+            "🕐 Редактирование слотов\n\nНажми на слот, чтобы изменить его время.\nВсего слотов: 9",
             reply_markup=keyboard,
             parse_mode=None
         )
@@ -771,9 +771,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = get_zoom_keyboard(zoom_link)
         
         if zoom_link:
-            text = f"🔗 {zoom_link}"
+            text = f"🔗 Ссылка на конференцию:\n\n{zoom_link}"
         else:
-            text = "🔗 Нет ссылки"
+            text = "🔗 Ссылка на конференцию не установлена.\n\nНажми 'Добавить', чтобы вставить ссылку."
         
         await query.edit_message_text(text, reply_markup=keyboard, parse_mode=None, disable_web_page_preview=True)
         return
@@ -781,7 +781,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "zoom_add" or data == "zoom_edit":
         context.user_data["waiting_for_zoom"] = True
         await query.edit_message_text(
-            "🔗 Вставь ссылку:",
+            "🔗 Вставь ссылку на конференцию (Zoom, Meet и т.д.):\n\n"
+            "Например: https://zoom.us/j/123456789",
             parse_mode=None
         )
         return
@@ -790,9 +791,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         settings = load_settings()
         settings["zoom_link"] = ""
         save_settings(settings)
-        await query.edit_message_text("✅ Удалено!", parse_mode=None)
+        await query.edit_message_text("✅ Ссылка удалена!", parse_mode=None)
         keyboard = get_settings_keyboard()
-        await query.edit_message_text("⚙️", reply_markup=keyboard, parse_mode=None)
+        await query.edit_message_text("⚙️ Настройки\n\nВыбери действие:", reply_markup=keyboard, parse_mode=None)
         return
     
     if data.startswith("edit_slot_"):
@@ -803,7 +804,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             hour = int(current_time.split(":")[0])
             keyboard = get_time_picker_keyboard(slot_idx, hour)
             await query.edit_message_text(
-                f"🕐 Слот #{slot_idx+1}: {current_time}",
+                f"🕐 Слот #{slot_idx+1}: {current_time}\n\nВыбери новое время:",
                 reply_markup=keyboard,
                 parse_mode=None
             )
@@ -820,7 +821,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             if new_time in slots and slots.index(new_time) != slot_idx:
                 await query.edit_message_text(
-                    f"❌ {new_time} занят!",
+                    f"❌ Время {new_time} уже занято другим слотом!\nВыбери другое время.",
                     reply_markup=get_time_picker_keyboard(slot_idx, int(slots[slot_idx].split(":")[0])),
                     parse_mode=None
                 )
@@ -831,24 +832,24 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             save_slots(slots)
             
             await query.edit_message_text(
-                f"✅ {old_time} → {new_time}",
+                f"✅ Время слота #{slot_idx+1} изменено:\n{old_time} → {new_time}",
                 parse_mode=None
             )
             keyboard = get_slots_edit_keyboard()
             await query.edit_message_text(
-                "🕐 Слоты (9)",
+                "🕐 Редактирование слотов\n\nНажми на слот, чтобы изменить его время.",
                 reply_markup=keyboard,
                 parse_mode=None
             )
         return
     
     if data == "manual_add":
-        await query.edit_message_text("✏️ Введи имя:", parse_mode=None)
+        await query.edit_message_text("✏️ Введи имя ученика:", parse_mode=None)
         context.user_data["waiting_for_manual"] = True
         return
     
     if data == "create_group":
-        await query.edit_message_text("👥 Название группы:", parse_mode=None)
+        await query.edit_message_text("👥 Создание группы\n\nВведи название группы:", parse_mode=None)
         context.user_data["waiting_for_group_name"] = True
         return
 
@@ -856,7 +857,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get("waiting_for_zoom"):
         link = update.message.text.strip()
         if not link:
-            await update.message.reply_text("❌ Пусто")
+            await update.message.reply_text("❌ Ссылка не может быть пустой")
             return
         
         settings = load_settings()
@@ -864,9 +865,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_settings(settings)
         context.user_data.pop("waiting_for_zoom", None)
         
-        await update.message.reply_text(f"✅ Ссылка сохранена!")
+        await update.message.reply_text(f"✅ Ссылка на конференцию сохранена!")
         keyboard = get_settings_keyboard()
-        await update.message.reply_text("⚙️", reply_markup=keyboard)
+        await update.message.reply_text("⚙️ Настройки", reply_markup=keyboard)
         return
     
     if context.user_data.get("waiting_for_manual"):
@@ -893,7 +894,7 @@ async def handle_manual_input(update: Update, context: ContextTypes.DEFAULT_TYPE
     save_students(students)
     context.user_data.pop("waiting_for_manual", None)
     
-    await update.message.reply_text(f"✅ {name} добавлен!")
+    await update.message.reply_text(f"✅ {name} добавлен в список!")
     
     slot_time = context.user_data.get("selected_slot")
     selected_date = context.user_data.get("selected_date")
@@ -907,7 +908,7 @@ async def handle_manual_input(update: Update, context: ContextTypes.DEFAULT_TYPE
         
         for lesson in schedule[key]:
             if lesson.get("time") == slot_time:
-                await update.message.reply_text(f"❌ Слот {slot_time} занят!")
+                await update.message.reply_text(f"❌ Слот {slot_time} уже занят!")
                 return
         
         schedule[key].append({
@@ -923,33 +924,35 @@ async def handle_manual_input(update: Update, context: ContextTypes.DEFAULT_TYPE
         context.user_data.pop("selected_date", None)
         
         buttons = [
-            [InlineKeyboardButton("Только день", callback_data=f"repeat_after_no_{key}_{slot_time}")],
-            [InlineKeyboardButton("На месяц", callback_data=f"repeat_after_month_{key}_{slot_time}")],
-            [InlineKeyboardButton("До 31 мая", callback_data=f"repeat_after_year_{key}_{slot_time}")],
-            [InlineKeyboardButton("❌", callback_data="cancel_add")]
+            [InlineKeyboardButton("❌ Только этот день", callback_data=f"repeat_after_no_{key}_{slot_time}")],
+            [InlineKeyboardButton("📅 На месяц", callback_data=f"repeat_after_month_{key}_{slot_time}")],
+            [InlineKeyboardButton("📅 До 31 мая", callback_data=f"repeat_after_year_{key}_{slot_time}")],
+            [InlineKeyboardButton("❌ Отмена", callback_data="cancel_add")]
         ]
         await update.message.reply_text(
-            f"✅ {name} на {slot_time}!\nПовторить?",
+            f"✅ {name} на {slot_time}!\n\nПовторить занятие?",
             reply_markup=InlineKeyboardMarkup(buttons)
         )
     else:
         keyboard = get_students_keyboard()
         await update.message.reply_text(
-            "👤 Выбери ученика:",
+            "👤 Теперь выбери ученика для слота:",
             reply_markup=keyboard
         )
         context.user_data["waiting_for_student"] = True
 
 async def handle_group_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.user_data.get("waiting_for_group_name"):
+        return
     group_name = update.message.text.strip()
     groups = load_groups()
     if group_name in groups:
-        await update.message.reply_text(f"❌ Группа {group_name} уже есть")
+        await update.message.reply_text(f"❌ Группа '{group_name}' уже существует!")
         context.user_data.pop("waiting_for_group_name", None)
         return
     groups[group_name] = []
     save_groups(groups)
-    await update.message.reply_text(f"✅ Группа {group_name} создана!\nВведи имена через запятую:")
+    await update.message.reply_text(f"✅ Группа '{group_name}' создана!\n\nВведи имена учеников через запятую:\n`Иванов, Петров, Сидорова`", parse_mode='Markdown')
     context.user_data["waiting_for_group_members"] = group_name
 
 async def handle_group_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -967,7 +970,7 @@ async def handle_group_members(update: Update, context: ContextTypes.DEFAULT_TYP
             students[f"manual_{datetime.datetime.now().timestamp()}"] = name
     save_groups(groups)
     save_students(students)
-    await update.message.reply_text(f"✅ Добавлены: {', '.join(names)}")
+    await update.message.reply_text(f"✅ В группу '{group_name}' добавлены:\n{', '.join(names)}")
     await show_schedule(update, context)
     context.user_data.pop("waiting_for_group_members", None)
 
@@ -979,15 +982,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id not in students:
         students[user_id] = first_name
         save_students(students)
-        await update.message.reply_text(f"✅ {first_name}, зарегистрирован!")
+        await update.message.reply_text(f"✅ {first_name}, ты зарегистрирован!")
     else:
-        await update.message.reply_text(f"👋 {first_name}!")
+        await update.message.reply_text(f"👋 С возвращением, {first_name}!")
     
     commands = [
         BotCommand("schedule", "📅 Расписание"),
         BotCommand("week", "📊 Неделя"),
         BotCommand("settings", "⚙️ Настройки"),
-        BotCommand("export", "📄 PDF")
+        BotCommand("export", "📄 Экспорт PDF")
     ]
     await context.bot.set_my_commands(commands)
     
@@ -1005,7 +1008,7 @@ async def show_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
     today = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
     start_of_week = today - datetime.timedelta(days=today.weekday())
     
-    text = "📊 НЕДЕЛЯ\n\n"
+    text = "📊 РАСПИСАНИЕ НА НЕДЕЛЮ\n\n"
     total = 0
     
     for i, day in enumerate(days):
@@ -1016,9 +1019,9 @@ async def show_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
         total += count
         
         emoji = "✅" if count > 0 else "⬜"
-        text += f"{emoji} {day} {target_date.strftime('%d.%m')}: {count}\n"
+        text += f"{emoji} {day} {target_date.strftime('%d.%m')}: {count} занятий\n"
     
-    text += f"\n📊 Всего: {total}"
+    text += f"\n📊 Всего: {total} занятий"
     await update.message.reply_text(text, parse_mode=None)
 
 async def export_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1035,12 +1038,12 @@ async def settings_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = get_settings_keyboard()
     if update.callback_query:
         await update.callback_query.edit_message_text(
-            "⚙️",
+            "⚙️ Настройки\n\nВыбери действие:",
             reply_markup=keyboard,
             parse_mode=None
         )
     else:
-        await update.message.reply_text("⚙️", reply_markup=keyboard)
+        await update.message.reply_text("⚙️ Настройки", reply_markup=keyboard)
 
 async def check_reminders(context: ContextTypes.DEFAULT_TYPE):
     settings = load_settings()
@@ -1066,9 +1069,9 @@ async def check_reminders(context: ContextTypes.DEFAULT_TYPE):
                     
                     if student_id:
                         try:
-                            message = f"⏰ {reminder_minutes} мин до занятия:\n👤 {student}\n📚 {topic}\n🕐 {lesson_time}"
+                            message = f"⏰ Напоминание!\nЧерез {reminder_minutes} мин. занятие:\n👤 {student}\n📚 {topic}\n🕐 {lesson_time}"
                             if zoom_link:
-                                message += f"\n🔗 {zoom_link}"
+                                message += f"\n🔗 Ссылка на конференцию:\n{zoom_link}"
                             await context.bot.send_message(
                                 chat_id=int(student_id),
                                 text=message,
