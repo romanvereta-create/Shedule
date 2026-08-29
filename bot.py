@@ -1,3 +1,4 @@
+
 import subprocess
 import sys
 import os
@@ -111,7 +112,6 @@ def get_schedule_keyboard(day_index, week_offset=0):
     
     for slot in slots:
         row = []
-        # Время
         row.append(InlineKeyboardButton(slot, callback_data=f"edit_time_{key}_{slot}"))
         
         lesson = None
@@ -122,7 +122,6 @@ def get_schedule_keyboard(day_index, week_offset=0):
         
         if lesson:
             student = lesson.get("student", "Неизвестно")
-            # Имя с индикатором напоминания
             reminder = lesson.get("reminder_minutes", 60)
             if reminder > 0:
                 row.append(InlineKeyboardButton(f"👤 {student} 🔔", callback_data=f"edit_student_{key}_{slot}"))
@@ -312,7 +311,15 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         day_index = today.weekday()
         context.user_data['selected_day'] = day_index
         context.user_data['week_offset'] = 0
-        await show_schedule(query, context)
+        
+        text = format_schedule(day_index, 0)
+        keyboard = get_schedule_keyboard(day_index, 0)
+        
+        await query.edit_message_text(
+            text,
+            reply_markup=keyboard,
+            parse_mode=None
+        )
         return
     
     if data.startswith("day_"):
@@ -321,14 +328,30 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         week_offset = int(parts[2])
         context.user_data['selected_day'] = day_index
         context.user_data['week_offset'] = week_offset
-        await show_schedule(query, context)
+        
+        text = format_schedule(day_index, week_offset)
+        keyboard = get_schedule_keyboard(day_index, week_offset)
+        
+        await query.edit_message_text(
+            text,
+            reply_markup=keyboard,
+            parse_mode=None
+        )
         return
     
     if data.startswith("week_"):
         week_offset = int(data.split("_")[1])
         context.user_data['week_offset'] = week_offset
         day_index = context.user_data.get('selected_day', 0)
-        await show_schedule(query, context)
+        
+        text = format_schedule(day_index, week_offset)
+        keyboard = get_schedule_keyboard(day_index, week_offset)
+        
+        await query.edit_message_text(
+            text,
+            reply_markup=keyboard,
+            parse_mode=None
+        )
         return
     
     if data.startswith("preview_time_"):
