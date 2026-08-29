@@ -176,10 +176,16 @@ def get_students_keyboard():
 
 def get_time_picker_keyboard(key, current_time):
     buttons = []
-    # Только целые часы
+    # Только целые часы (4 в ряд)
+    row = []
     for h in range(9, 23):
         time_str = f"{h:02d}:00"
-        buttons.append([InlineKeyboardButton(time_str, callback_data=f"set_time_{key}_{current_time}_{time_str}")])
+        row.append(InlineKeyboardButton(time_str, callback_data=f"set_time_{key}_{current_time}_{time_str}"))
+        if len(row) == 4:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
     
     # Кнопки +5 и -5
     current_hour = int(current_time.split(":")[0])
@@ -346,7 +352,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         key = parts[2]
         new_time = "_".join(parts[3:])
         
-        # Ищем старый слот
+        # Находим старый слот
         slots = load_slots()
         old_time = None
         for slot in slots:
@@ -360,7 +366,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 break
         
         if not old_time:
-            # Если не нашли, просто берём первый слот
             old_time = slots[0] if slots else "10:00"
         
         # Проверяем, не занято ли новое время
@@ -369,7 +374,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         # Меняем слот
-        slots = load_slots()
         if old_time in slots:
             idx = slots.index(old_time)
             slots[idx] = new_time
@@ -666,6 +670,55 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
+    if data.startswith("set_time_"):
+        parts = data.split("_")
+        key = parts[2]
+        current_time = "_".join(parts[3:-1])
+        new_time = parts[-1]
+        
+        # Находим старый слот
+        slots = load_slots()
+        old_time = None
+        for slot in slots:
+            schedule = load_schedule()
+            if key in schedule:
+                for lesson in schedule[key]:
+                    if lesson.get("time") == slot:
+                        old_time = slot
+                        break
+            if old_time:
+                break
+        
+        if not old_time:
+            old_time = current_time
+        
+        # Проверяем, не занято ли новое время
+        if new_time in slots and new_time != old_time:
+            await query.edit_message_text(f"❌ Время {new_time} уже существует!", parse_mode=None)
+            return
+        
+        # Меняем слот
+        if old_time in slots:
+            idx = slots.index(old_time)
+            slots[idx] = new_time
+            slots = sorted(slots)
+            save_slots(slots)
+            
+            schedule = load_schedule()
+            if key in schedule:
+                for lesson in schedule[key]:
+                    if lesson.get("time") == old_time:
+                        lesson["time"] = new_time
+                schedule[key] = sorted(schedule[key], key=lambda x: x.get("time", "00:00"))
+                save_schedule(schedule)
+            
+            await query.edit_message_text(f"✅ Время изменено: {old_time} → {new_time}", parse_mode=None)
+            await show_schedule(query, context)
+            return
+        else:
+            await query.edit_message_text("❌ Время не найдено", parse_mode=None)
+        return
+    
     if data.startswith("edit_student_"):
         parts = data.split("_")
         key = parts[2]
@@ -812,8 +865,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "create_group":
         await query.edit_message_text("👥 Создание группы\n\nВведи название группы:", parse_mode=None)
         context.user_data["waiting_for_group_name"] = True
-        return
-    
+        return    
     if data == "cancel_add":
         await query.edit_message_text("❌ Отменено", parse_mode=None)
         context.user_data.clear()
