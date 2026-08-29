@@ -327,20 +327,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_schedule(query, context)
         return
     
-    if data.startswith("preview_time_"):
-        parts = data.split("_")
-        key = parts[2]
-        old_time = "_".join(parts[3:-1])
-        new_time = parts[-1]
-        
-        keyboard = get_time_picker_keyboard(key, new_time)
-        await query.edit_message_text(
-            f"🕐 Выбери время для {new_time}:",
-            reply_markup=keyboard,
-            parse_mode=None
-        )
-        return
-    
     if data.startswith("add_slot_"):
         parts = data.split("_")
         key = parts[2]
@@ -645,6 +631,20 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         else:
             await query.edit_message_text("❌ Время не найдено", parse_mode=None)
+        return
+    
+    if data.startswith("preview_time_"):
+        parts = data.split("_")
+        key = parts[2]
+        old_time = "_".join(parts[3:-1])
+        new_time = parts[-1]
+        
+        keyboard = get_time_picker_keyboard(key, new_time)
+        await query.edit_message_text(
+            f"🕐 Выбери время для {new_time}:",
+            reply_markup=keyboard,
+            parse_mode=None
+        )
         return
     
     if data.startswith("edit_student_"):
