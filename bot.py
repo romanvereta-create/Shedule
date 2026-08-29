@@ -285,6 +285,8 @@ def get_settings_keyboard():
     zoom_status = "🔗 Есть" if zoom_link else "🔗 Нет"
     buttons = [
         [InlineKeyboardButton(f"⏰ Напомнить за {current} мин", callback_data="settings_show")],
+        [InlineKeyboardButton("➖ 5 мин", callback_data="set_dec"), 
+         InlineKeyboardButton("➕ 5 мин", callback_data="set_inc")],
         [InlineKeyboardButton("🕐 Слоты", callback_data="settings_slots")],
         [InlineKeyboardButton(zoom_status, callback_data="settings_zoom")],
         [InlineKeyboardButton("🔙 Назад", callback_data="settings_back")]
@@ -750,7 +752,33 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         settings = load_settings()
         current = settings.get("reminder_minutes", 60)
         await query.edit_message_text(
-            f"⏰ Напоминание за {current} мин.",
+            f"⏰ Текущее время напоминания: {current} минут\n\nИзменить можно кнопками ниже:",
+            reply_markup=get_settings_keyboard(),
+            parse_mode=None
+        )
+        return
+    
+    if data == "set_inc":
+        settings = load_settings()
+        current = settings.get("reminder_minutes", 60)
+        new_val = min(current + 5, 1440)
+        settings["reminder_minutes"] = new_val
+        save_settings(settings)
+        await query.edit_message_text(
+            f"⏰ Напоминание установлено на {new_val} минут!\n\nИзменить можно кнопками ниже:",
+            reply_markup=get_settings_keyboard(),
+            parse_mode=None
+        )
+        return
+    
+    if data == "set_dec":
+        settings = load_settings()
+        current = settings.get("reminder_minutes", 60)
+        new_val = max(current - 5, 5)
+        settings["reminder_minutes"] = new_val
+        save_settings(settings)
+        await query.edit_message_text(
+            f"⏰ Напоминание установлено на {new_val} минут!\n\nИзменить можно кнопками ниже:",
             reply_markup=get_settings_keyboard(),
             parse_mode=None
         )
