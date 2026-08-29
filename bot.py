@@ -82,14 +82,65 @@ def save_settings(settings):
 
 # ======================== КНОПКИ ========================
 
-def get_day_keyboard(week_offset=0, selected_day=0):
+def get_schedule_with_empty_slots(day_index, week_offset=0):
+    """Расписание с пустыми слотами (➕) и учениками (🗑)"""
+    schedule = load_schedule()
     days = ["ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ", "ВС"]
-    buttons = []
-    for i, day in enumerate(days):
-        is_selected = "✅ " if i == selected_day else ""
-        callback = f"day_{i}_{week_offset}"
-        buttons.append(InlineKeyboardButton(f"{is_selected}{day}", callback_data=callback))
+    day_name = days[day_index]
     
+    today = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
+    start_of_week = today - datetime.timedelta(days=today.weekday())
+    target_date = start_of_week + datetime.timedelta(days=day_index + week_offset * 7)
+    key = target_date.strftime("%Y-%m-%d")
+    date_str = target_date.strftime("%d.%m")
+    
+    lessons = schedule.get(key, [])
+    lessons.sort(key=lambda x: x.get("time", "00:00"))
+    
+    all_slots = ["10:00", "11:00", "12:00", "13:00", "14:00", 
+                 "15:00", "16:00", "17:00", "18:00", "19:00", "20:00"]
+    busy_times = [l.get("time") for l in lessons]
+    
+    buttons = []
+    
+    # Заголовок дня
+    is_today = key == today.strftime("%Y-%m-%d")
+    if is_today:
+        header = f"📅 СЕГОДНЯ {date_str}"
+    elif week_offset == 0 and day_index == today.weekday():
+        header = f"📅 СЕГОДНЯ {date_str}"
+    else:
+        header = f"📅 {day_name} {date_str}"
+    
+    # Показываем все слоты
+    for slot in all_slots:
+        if slot in busy_times:
+            for idx, lesson in enumerate(lessons):
+                if lesson.get("time") == slot:
+                    student = lesson.get("student", "Неизвестно")
+                    topic = lesson.get("topic", "-")
+                    zoom = lesson.get("zoom_link", "")
+                    label = f"🕐 {slot} — {student}"
+                    if zoom:
+                        label += " 🔗"
+                    if topic != "-":
+                        label += f" ({topic})"
+                    buttons.append([InlineKeyboardButton(
+                        f"🗑 {label}",
+                        callback_data=f"delete_lesson_{key}_{idx}"
+                    )])
+                    break
+        else:
+            # Пустой слот → кнопка для добавления
+            buttons.append([InlineKeyboardButton(
+                f"➕ {slot} свободно",
+                callback_data=f"add_slot_{key}_{slot}"
+            )])
+    
+    if not buttons:
+        buttons.append([InlineKeyboardButton("✨ Весь день занят", callback_data="empty")])
+    
+    # Кнопки навигации
     nav_buttons = [
         InlineKeyboardButton("◀ Назад", callback_data=f"week_{week_offset-1}"),
         InlineKeyboardButton("📅 Сегодня", callback_data="today"),
@@ -98,12 +149,14 @@ def get_day_keyboard(week_offset=0, selected_day=0):
     
     action_buttons = [
         InlineKeyboardButton("➕ Добавить", callback_data="add_lesson"),
-        InlineKeyboardButton("🗑 Удалить", callback_data="delete_lesson"),
         InlineKeyboardButton("⚙️ Настройки", callback_data="settings")
     ]
     
     keyboard = [buttons, nav_buttons, action_buttons]
     return InlineKeyboardMarkup(keyboard)
+
+def get_day_keyboard(week_offset=0, selected_day=0):
+    return get_schedule_with_empty_slots(selected_day, week_offset)
 
 def get_students_keyboard():
     students = load_students()
@@ -217,35 +270,6 @@ def get_settings_keyboard():
     ]
     return InlineKeyboardMarkup(buttons)
 
-def get_schedule_with_delete_buttons(day_index, week_offset=0):
-    """Расписание с кнопками удаления для каждого ученика"""
-    schedule = load_schedule()
-    days = ["ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ", "ВС"]
-    day_name = days[day_index]
-    
-    today = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
-    start_of_week = today - datetime.timedelta(days=today.weekday())
-    target_date = start_of_week + datetime.timedelta(days=day_index + week_offset * 7)
-    key = target_date.strftime("%Y-%m-%d")
-    
-    lessons = schedule.get(key, [])
-    lessons.sort(key=lambda x: x.get("time", "00:00"))
-    
-    buttons = []
-    for idx, lesson in enumerate(lessons):
-        time = lesson.get("time", "00:00")
-        student = lesson.get("student", "Неизвестно")
-        buttons.append([InlineKeyboardButton(
-            f"🗑 {time} — {student}",
-            callback_data=f"delete_lesson_{key}_{idx}"
-        )])
-    
-    if not buttons:
-        buttons.append([InlineKeyboardButton("✨ Нет занятий для удаления", callback_data="empty")])
-    
-    buttons.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_schedule")])
-    return InlineKeyboardMarkup(buttons)
-
 # ======================== ФОРМАТИРОВАНИЕ ========================
 
 def format_schedule(day_index, week_offset=0):
@@ -299,6 +323,8 @@ async def show_schedule_message(update_or_query, context, text_prefix=""):
     day_index = today.weekday()
     context.user_data['selected_day'] = day_index
     context.user_data['week_offset'] = 0
+    
+    # Получаем текст расписания
     text = format_schedule(day_index, 0)
     keyboard = get_day_keyboard(0, day_index)
     
@@ -306,28 +332,18 @@ async def show_schedule_message(update_or_query, context, text_prefix=""):
     
     # Проверяем тип объекта
     if hasattr(update_or_query, 'callback_query') and update_or_query.callback_query:
-        # Это callback (пришло от кнопки)
         await update_or_query.callback_query.edit_message_text(
             full_text,
             reply_markup=keyboard,
             parse_mode='Markdown'
         )
     elif hasattr(update_or_query, 'message'):
-        # Это обычное сообщение (команда)
         await update_or_query.message.reply_text(
             full_text,
             reply_markup=keyboard,
             parse_mode='Markdown'
         )
-    elif hasattr(update_or_query, 'edit_message_text'):
-        # Это просто query
-        await update_or_query.edit_message_text(
-            full_text,
-            reply_markup=keyboard,
-            parse_mode='Markdown'
-        )
     else:
-        # Если ничего не подошло — пробуем отправить новое сообщение
         try:
             await update_or_query.message.reply_text(
                 full_text,
@@ -533,7 +549,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         BotCommand("schedule", "📅 Расписание на сегодня"),
         BotCommand("week", "📊 Расписание на неделю"),
         BotCommand("add", "➕ Добавить занятие"),
-        BotCommand("delete", "🗑 Удалить занятие"),
         BotCommand("settings", "⚙️ Настройки"),
         BotCommand("export", "📄 Экспорт в PDF")
     ]
@@ -729,22 +744,6 @@ async def settings_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode='Markdown'
         )
 
-async def delete_lesson_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает расписание с кнопками удаления"""
-    today = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
-    day_index = today.weekday()
-    context.user_data['selected_day'] = day_index
-    context.user_data['week_offset'] = 0
-    
-    text = format_schedule(day_index, 0)
-    keyboard = get_schedule_with_delete_buttons(day_index, 0)
-    
-    await update.message.reply_text(
-        f"🗑 *Выбери занятие для удаления:*\n\n{text}",
-        reply_markup=keyboard,
-        parse_mode='Markdown'
-    )
-
 async def select_student(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -788,6 +787,37 @@ async def select_student(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parts = data.split("_")
         student_id = parts[1]
         student_name = "_".join(parts[2:])
+        
+        # Проверяем, есть ли уже выбранный слот
+        slot_time = context.user_data.get("selected_slot")
+        selected_date = context.user_data.get("selected_date")
+        
+        if slot_time and selected_date:
+            # Добавляем ученика в выбранный слот
+            day, month, year = map(int, selected_date.split('.'))
+            key = f"{year:04d}-{month:02d}-{day:02d}"
+            
+            schedule = load_schedule()
+            if key not in schedule:
+                schedule[key] = []
+            
+            schedule[key].append({
+                "time": slot_time,
+                "student": student_name,
+                "student_id": student_id,
+                "topic": "-",
+                "group": None,
+                "reminded": False,
+                "zoom_link": ""
+            })
+            save_schedule(schedule)
+            
+            context.user_data.pop("selected_slot", None)
+            context.user_data.pop("selected_date", None)
+            
+            await query.edit_message_text(f"✅ Ученик *{student_name}* добавлен на {slot_time}!")
+            await show_schedule_message(query, context)
+            return
         
         context.user_data["selected_student"] = {
             "id": student_id,
@@ -900,7 +930,6 @@ async def select_minutes(update: Update, context: ContextTypes.DEFAULT_TYPE):
         student_name = context.user_data.get("selected_student", {}).get("name", context.user_data.get("selected_group", "Ученик"))
         date_str = context.user_data.get("selected_date", "Дата")
         
-        # Спросить про Zoom ссылку
         buttons = [
             [InlineKeyboardButton("📎 Добавить ссылку", callback_data="add_zoom")],
             [InlineKeyboardButton("⏭ Пропустить", callback_data="skip_zoom")],
@@ -956,7 +985,6 @@ async def handle_zoom_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await show_repeat_choice(update, context, None)
 
 async def show_repeat_choice(update, context, query=None):
-    """Показывает выбор повтора занятия"""
     student_name = context.user_data.get("selected_student", {}).get("name", context.user_data.get("selected_group", "Ученик"))
     date_str = context.user_data.get("selected_date", "Дата")
     time_str = context.user_data.get("selected_time", "00:00")
@@ -1082,7 +1110,6 @@ async def select_repeat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 async def delete_lesson_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Удаление занятия по нажатию на кнопку с учеником"""
     query = update.callback_query
     await query.answer()
     
@@ -1094,8 +1121,8 @@ async def delete_lesson_confirm(update: Update, context: ContextTypes.DEFAULT_TY
     
     if data.startswith("delete_lesson_"):
         parts = data.split("_")
-        key = "_".join(parts[2:-1])  # дата
-        idx = int(parts[-1])  # индекс занятия
+        key = "_".join(parts[2:-1])
+        idx = int(parts[-1])
         
         schedule = load_schedule()
         if key in schedule and 0 <= idx < len(schedule[key]):
@@ -1103,13 +1130,11 @@ async def delete_lesson_confirm(update: Update, context: ContextTypes.DEFAULT_TY
             student = lesson.get("student", "Неизвестно")
             time = lesson.get("time", "00:00")
             
-            # Удаляем занятие
             del schedule[key][idx]
             if not schedule[key]:
                 del schedule[key]
             save_schedule(schedule)
             
-            # Показываем обновлённое расписание
             await query.edit_message_text(
                 f"✅ *Удалено занятие:* {time} — {student}",
                 parse_mode='Markdown'
@@ -1117,6 +1142,28 @@ async def delete_lesson_confirm(update: Update, context: ContextTypes.DEFAULT_TY
             await show_schedule_message(query, context)
         else:
             await query.edit_message_text("❌ Занятие не найдено")
+        return
+    
+    if data.startswith("add_slot_"):
+        parts = data.split("_")
+        key = parts[2]
+        slot_time = parts[3]
+        
+        context.user_data["selected_date"] = datetime.datetime.strptime(key, "%Y-%m-%d").strftime("%d.%m.%Y")
+        context.user_data["selected_slot"] = slot_time
+        
+        students = load_students()
+        if not students:
+            await query.edit_message_text("❌ Нет зарегистрированных учеников. Сначала добавь учеников через /add_manual")
+            return
+        
+        keyboard = get_students_keyboard()
+        await query.edit_message_text(
+            "👤 *Выбери ученика для этого слота:*",
+            reply_markup=keyboard,
+            parse_mode='Markdown'
+        )
+        context.user_data["waiting_for_student"] = True
         return
 
 async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1220,10 +1267,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await add_lesson(update, context)
         return
     
-    if data == "delete_lesson":
-        await delete_lesson_menu(update, context)
-        return
-    
     if data == "settings":
         await settings_callback(update, context)
         return
@@ -1232,7 +1275,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await settings_callback(update, context)
         return
     
-    if data.startswith("delete_lesson_") or data == "back_to_schedule":
+    # Удаление ученика и добавление в слот
+    if data.startswith("delete_lesson_") or data.startswith("add_slot_") or data == "back_to_schedule":
         await delete_lesson_confirm(update, context)
         return
     
@@ -1272,7 +1316,6 @@ def main():
     app.add_handler(CommandHandler("add", add_lesson))
     app.add_handler(CommandHandler("add_manual", add_manual))
     app.add_handler(CommandHandler("create_group", create_group))
-    app.add_handler(CommandHandler("delete", delete_lesson_menu))
     app.add_handler(CommandHandler("settings", settings_menu))
     app.add_handler(CommandHandler("export", export_week))
 
