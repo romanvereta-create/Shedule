@@ -756,8 +756,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # ======================== ZOOM НАСТРОЙКИ ========================
-    
     if data == "settings_zoom":
         settings = load_settings()
         zoom_link = settings.get("zoom_link", "")
@@ -846,29 +844,38 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["waiting_for_group_name"] = True
         return
 
-async def handle_zoom_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.user_data.get("waiting_for_zoom"):
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка любого текста: ссылка, имя, группа"""
+    if context.user_data.get("waiting_for_zoom"):
+        link = update.message.text.strip()
+        if not link:
+            await update.message.reply_text("❌ Ссылка не может быть пустой")
+            return
+        
+        settings = load_settings()
+        settings["zoom_link"] = link
+        save_settings(settings)
+        context.user_data.pop("waiting_for_zoom", None)
+        
+        await update.message.reply_text(f"✅ Ссылка сохранена!\n\n{link}")
+        
+        keyboard = get_settings_keyboard()
+        await update.message.reply_text("⚙️ Настройки", reply_markup=keyboard)
         return
     
-    link = update.message.text.strip()
-    if not link:
-        await update.message.reply_text("❌ Ссылка не может быть пустой")
+    if context.user_data.get("waiting_for_manual"):
+        await handle_manual_input(update, context)
         return
     
-    settings = load_settings()
-    settings["zoom_link"] = link
-    save_settings(settings)
-    context.user_data.pop("waiting_for_zoom", None)
+    if context.user_data.get("waiting_for_group_name"):
+        await handle_group_name(update, context)
+        return
     
-    await update.message.reply_text(f"✅ Ссылка сохранена!\n\n{link}")
-    
-    keyboard = get_settings_keyboard()
-    await update.message.reply_text("⚙️ Настройки", reply_markup=keyboard)
+    if context.user_data.get("waiting_for_group_members"):
+        await handle_group_members(update, context)
+        return
 
 async def handle_manual_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.user_data.get("waiting_for_manual"):
-        return
-    
     name = update.message.text.strip()
     if not name:
         await update.message.reply_text("❌ Имя не может быть пустым")
@@ -928,8 +935,6 @@ async def handle_manual_input(update: Update, context: ContextTypes.DEFAULT_TYPE
         context.user_data["waiting_for_student"] = True
 
 async def handle_group_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.user_data.get("waiting_for_group_name"):
-        return
     group_name = update.message.text.strip()
     groups = load_groups()
     if group_name in groups:
@@ -1221,10 +1226,7 @@ def main():
     app.add_handler(CommandHandler("export", export_week))
     
     app.add_handler(CallbackQueryHandler(handle_callback))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_manual_input))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_group_name))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_group_members))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_zoom_input))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     
     try:
         job_queue = app.job_queue
