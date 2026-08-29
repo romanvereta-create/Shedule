@@ -111,6 +111,7 @@ def get_schedule_keyboard(day_index, week_offset=0):
     
     for slot in slots:
         row = []
+        # Время
         row.append(InlineKeyboardButton(slot, callback_data=f"edit_time_{key}_{slot}"))
         
         lesson = None
@@ -121,15 +122,14 @@ def get_schedule_keyboard(day_index, week_offset=0):
         
         if lesson:
             student = lesson.get("student", "Неизвестно")
-            row.append(InlineKeyboardButton(student, callback_data=f"edit_student_{key}_{slot}"))
+            # Имя с индикатором напоминания
             reminder = lesson.get("reminder_minutes", 60)
             if reminder > 0:
-                row.append(InlineKeyboardButton("🔔✅", callback_data=f"edit_reminder_{key}_{slot}"))
+                row.append(InlineKeyboardButton(f"👤 {student} 🔔", callback_data=f"edit_student_{key}_{slot}"))
             else:
-                row.append(InlineKeyboardButton("🔕❌", callback_data=f"edit_reminder_{key}_{slot}"))
+                row.append(InlineKeyboardButton(f"👤 {student} 🔕", callback_data=f"edit_student_{key}_{slot}"))
         else:
             row.append(InlineKeyboardButton("➕", callback_data=f"add_slot_{key}_{slot}"))
-            row.append(InlineKeyboardButton(" ", callback_data="empty"))
         
         buttons.append(row)
     
@@ -176,7 +176,6 @@ def get_students_keyboard():
 
 def get_time_picker_keyboard(key, current_time):
     buttons = []
-    # Только целые часы (4 в ряд)
     row = []
     for h in range(9, 23):
         time_str = f"{h:02d}:00"
@@ -187,7 +186,6 @@ def get_time_picker_keyboard(key, current_time):
     if row:
         buttons.append(row)
     
-    # Кнопки +5 и -5
     current_hour = int(current_time.split(":")[0])
     current_min = int(current_time.split(":")[1])
     
@@ -352,7 +350,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         key = parts[2]
         new_time = "_".join(parts[3:])
         
-        # Находим старый слот
         slots = load_slots()
         old_time = None
         for slot in slots:
@@ -368,12 +365,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not old_time:
             old_time = slots[0] if slots else "10:00"
         
-        # Проверяем, не занято ли новое время
         if new_time in slots and new_time != old_time:
             await query.edit_message_text(f"❌ Время {new_time} уже существует!", parse_mode=None)
             return
         
-        # Меняем слот
         if old_time in slots:
             idx = slots.index(old_time)
             slots[idx] = new_time
@@ -473,10 +468,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         buttons = [
                             [InlineKeyboardButton("🗑 Удалить", callback_data=f"confirm_delete_{key}_{time}")],
                             [InlineKeyboardButton("🔄 Заменить", callback_data=f"replace_student_{key}_{time}")],
+                            [InlineKeyboardButton("⏰ Напоминание", callback_data=f"reminder_{key}_{time}")],
                             [InlineKeyboardButton("❌ Отмена", callback_data="cancel_add")]
                         ]
                         await query.edit_message_text(
-                            f"👤 {lesson.get('student')}\n\nЧто сделать?",
+                            f"👤 {lesson.get('student')}\n🕐 {time}\n🔔 Напоминание: {lesson.get('reminder_minutes', 60)} мин\n\nЧто сделать?",
                             reply_markup=InlineKeyboardMarkup(buttons),
                             parse_mode=None
                         )
@@ -491,6 +487,19 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode=None
         )
         context.user_data.pop("waiting_for_student", None)
+        return
+    
+    if data.startswith("reminder_"):
+        parts = data.split("_")
+        key = parts[1]
+        time = "_".join(parts[2:])
+        
+        keyboard = get_reminder_picker_keyboard(key, time)
+        await query.edit_message_text(
+            f"🔔 Выбери время напоминания для {time}:",
+            reply_markup=keyboard,
+            parse_mode=None
+        )
         return
     
     if data.startswith("confirm_delete_"):
@@ -676,7 +685,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         current_time = "_".join(parts[3:-1])
         new_time = parts[-1]
         
-        # Находим старый слот
         slots = load_slots()
         old_time = None
         for slot in slots:
@@ -692,12 +700,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not old_time:
             old_time = current_time
         
-        # Проверяем, не занято ли новое время
         if new_time in slots and new_time != old_time:
             await query.edit_message_text(f"❌ Время {new_time} уже существует!", parse_mode=None)
             return
         
-        # Меняем слот
         if old_time in slots:
             idx = slots.index(old_time)
             slots[idx] = new_time
@@ -734,29 +740,17 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     buttons = [
                         [InlineKeyboardButton("🗑 Удалить", callback_data=f"confirm_delete_{key}_{time}")],
                         [InlineKeyboardButton("🔄 Заменить", callback_data=f"replace_student_{key}_{time}")],
+                        [InlineKeyboardButton("⏰ Напоминание", callback_data=f"reminder_{key}_{time}")],
                         [InlineKeyboardButton("❌ Отмена", callback_data="cancel_add")]
                     ]
                     await query.edit_message_text(
-                        f"👤 {lesson.get('student')}\n\nЧто сделать?",
+                        f"👤 {lesson.get('student')}\n🕐 {time}\n🔔 Напоминание: {lesson.get('reminder_minutes', 60)} мин\n\nЧто сделать?",
                         reply_markup=InlineKeyboardMarkup(buttons),
                         parse_mode=None
                     )
                     return
         
         await query.edit_message_text("❌ Занятие не найдено", parse_mode=None)
-        return
-    
-    if data.startswith("edit_reminder_"):
-        parts = data.split("_")
-        key = parts[2]
-        time = "_".join(parts[3:])
-        
-        keyboard = get_reminder_picker_keyboard(key, time)
-        await query.edit_message_text(
-            f"🔔 Выбери время напоминания для {time}:",
-            reply_markup=keyboard,
-            parse_mode=None
-        )
         return
     
     if data.startswith("set_reminder_"):
@@ -865,7 +859,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "create_group":
         await query.edit_message_text("👥 Создание группы\n\nВведи название группы:", parse_mode=None)
         context.user_data["waiting_for_group_name"] = True
-        return    
+        return
+    
     if data == "cancel_add":
         await query.edit_message_text("❌ Отменено", parse_mode=None)
         context.user_data.clear()
