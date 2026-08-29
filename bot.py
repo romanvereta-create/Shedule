@@ -791,10 +791,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     
                     if repeat_type == "year":
                         end_date = datetime.datetime(year, 5, 31)
-                        if start_date > end_date:
-                            await query.edit_message_text("❌ Дата позже 31 мая")
-                            context.user_data.clear()
-                            return
                         current = start_date + datetime.timedelta(days=7)
                         count = 1
                         while current <= end_date:
@@ -933,10 +929,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if data == "repeat_year":
             end_date = datetime.datetime(year, 5, 31)
-            if start_date > end_date:
-                await query.edit_message_text("❌ Дата позже 31 мая")
-                context.user_data.clear()
-                return
             current = start_date
             count = 0
             while current <= end_date:
@@ -944,7 +936,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 count += 1
                 current += datetime.timedelta(days=7)
             save_schedule(schedule)
-            await query.edit_message_text(f"✅ Добавлено {count} занятий!")
+            await query.edit_message_text(f"✅ Добавлено {count} занятий (до 31 мая)!")
             await show_schedule(query, context)
             context.user_data.clear()
             return
@@ -1095,8 +1087,19 @@ async def handle_manual_input(update: Update, context: ContextTypes.DEFAULT_TYPE
         save_schedule(schedule)
         context.user_data.pop("selected_slot", None)
         context.user_data.pop("selected_date", None)
-        await update.message.reply_text(f"✅ {name} добавлен на {slot_time}!")
-        await show_schedule(update, context)
+        
+        # Спрашиваем про повтор
+        buttons = [
+            [InlineKeyboardButton("❌ Только этот день", callback_data=f"repeat_after_no_{key}_{slot_time}")],
+            [InlineKeyboardButton("📅 На месяц", callback_data=f"repeat_after_month_{key}_{slot_time}")],
+            [InlineKeyboardButton("📅 До 31 мая", callback_data=f"repeat_after_year_{key}_{slot_time}")],
+            [InlineKeyboardButton("❌ Отмена", callback_data="cancel_add")]
+        ]
+        await update.message.reply_text(
+            f"✅ {name} на {slot_time}!\n\nПовторить занятие?",
+            reply_markup=InlineKeyboardMarkup(buttons),
+            parse_mode='Markdown'
+        )
     else:
         keyboard = get_students_keyboard()
         await update.message.reply_text(
