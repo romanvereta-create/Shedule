@@ -176,13 +176,12 @@ def get_students_keyboard():
 
 def get_time_picker_keyboard(key, current_time):
     buttons = []
-    # Кнопки времени (кратные 5 минутам)
+    # Только целые часы
     for h in range(9, 23):
-        for m in range(0, 60, 5):
-            time_str = f"{h:02d}:{m:02d}"
-            buttons.append([InlineKeyboardButton(time_str, callback_data=f"set_time_{key}_{current_time}_{time_str}")])
+        time_str = f"{h:02d}:00"
+        buttons.append([InlineKeyboardButton(time_str, callback_data=f"set_time_{key}_{current_time}_{time_str}")])
     
-    # Кнопки +5 и -5 (предпросмотр)
+    # Кнопки +5 и -5
     current_hour = int(current_time.split(":")[0])
     current_min = int(current_time.split(":")[1])
     
@@ -204,6 +203,7 @@ def get_time_picker_keyboard(key, current_time):
         InlineKeyboardButton("➕5", callback_data=f"preview_time_{key}_{current_time}_{next_time}")
     ])
     
+    buttons.append([InlineKeyboardButton("✅ Подтвердить", callback_data=f"confirm_time_{key}_{current_time}")])
     buttons.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel_add")])
     return InlineKeyboardMarkup(buttons)
 
@@ -339,6 +339,56 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=keyboard,
             parse_mode=None
         )
+        return
+    
+    if data.startswith("confirm_time_"):
+        parts = data.split("_")
+        key = parts[2]
+        new_time = "_".join(parts[3:])
+        
+        # Ищем старый слот
+        slots = load_slots()
+        old_time = None
+        for slot in slots:
+            schedule = load_schedule()
+            if key in schedule:
+                for lesson in schedule[key]:
+                    if lesson.get("time") == slot:
+                        old_time = slot
+                        break
+            if old_time:
+                break
+        
+        if not old_time:
+            # Если не нашли, просто берём первый слот
+            old_time = slots[0] if slots else "10:00"
+        
+        # Проверяем, не занято ли новое время
+        if new_time in slots and new_time != old_time:
+            await query.edit_message_text(f"❌ Время {new_time} уже существует!", parse_mode=None)
+            return
+        
+        # Меняем слот
+        slots = load_slots()
+        if old_time in slots:
+            idx = slots.index(old_time)
+            slots[idx] = new_time
+            slots = sorted(slots)
+            save_slots(slots)
+            
+            schedule = load_schedule()
+            if key in schedule:
+                for lesson in schedule[key]:
+                    if lesson.get("time") == old_time:
+                        lesson["time"] = new_time
+                schedule[key] = sorted(schedule[key], key=lambda x: x.get("time", "00:00"))
+                save_schedule(schedule)
+            
+            await query.edit_message_text(f"✅ Время изменено: {old_time} → {new_time}", parse_mode=None)
+            await show_schedule(query, context)
+            return
+        else:
+            await query.edit_message_text("❌ Время не найдено", parse_mode=None)
         return
     
     if data.startswith("add_slot_"):
@@ -614,37 +664,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=keyboard,
             parse_mode=None
         )
-        return
-    
-    if data.startswith("set_time_"):
-        parts = data.split("_")
-        key = parts[2]
-        old_time = "_".join(parts[3:-1])
-        new_time = parts[-1]
-        
-        slots = load_slots()
-        if old_time in slots:
-            if new_time in slots and new_time != old_time:
-                await query.edit_message_text(f"❌ Время {new_time} уже существует!", parse_mode=None)
-                return
-            idx = slots.index(old_time)
-            slots[idx] = new_time
-            slots = sorted(slots)
-            save_slots(slots)
-            
-            schedule = load_schedule()
-            if key in schedule:
-                for lesson in schedule[key]:
-                    if lesson.get("time") == old_time:
-                        lesson["time"] = new_time
-                schedule[key] = sorted(schedule[key], key=lambda x: x.get("time", "00:00"))
-                save_schedule(schedule)
-            
-            await query.edit_message_text(f"✅ Время изменено: {old_time} → {new_time}", parse_mode=None)
-            await show_schedule(query, context)
-            return
-        else:
-            await query.edit_message_text("❌ Время не найдено", parse_mode=None)
         return
     
     if data.startswith("edit_student_"):
