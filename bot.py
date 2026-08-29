@@ -92,7 +92,6 @@ def get_schedule_with_empty_slots(day_index, week_offset=0):
     start_of_week = today - datetime.timedelta(days=today.weekday())
     target_date = start_of_week + datetime.timedelta(days=day_index + week_offset * 7)
     key = target_date.strftime("%Y-%m-%d")
-    date_str = target_date.strftime("%d.%m")
     
     lessons = schedule.get(key, [])
     lessons.sort(key=lambda x: x.get("time", "00:00"))
@@ -103,16 +102,6 @@ def get_schedule_with_empty_slots(day_index, week_offset=0):
     
     buttons = []
     
-    # Заголовок дня
-    is_today = key == today.strftime("%Y-%m-%d")
-    if is_today:
-        header = f"📅 СЕГОДНЯ {date_str}"
-    elif week_offset == 0 and day_index == today.weekday():
-        header = f"📅 СЕГОДНЯ {date_str}"
-    else:
-        header = f"📅 {day_name} {date_str}"
-    
-    # Показываем все слоты
     for slot in all_slots:
         if slot in busy_times:
             for idx, lesson in enumerate(lessons):
@@ -131,7 +120,6 @@ def get_schedule_with_empty_slots(day_index, week_offset=0):
                     )])
                     break
         else:
-            # Пустой слот → кнопка для добавления
             buttons.append([InlineKeyboardButton(
                 f"➕ {slot} свободно",
                 callback_data=f"add_slot_{key}_{slot}"
@@ -140,7 +128,6 @@ def get_schedule_with_empty_slots(day_index, week_offset=0):
     if not buttons:
         buttons.append([InlineKeyboardButton("✨ Весь день занят", callback_data="empty")])
     
-    # Кнопки навигации
     nav_buttons = [
         InlineKeyboardButton("◀ Назад", callback_data=f"week_{week_offset-1}"),
         InlineKeyboardButton("📅 Сегодня", callback_data="today"),
@@ -152,7 +139,7 @@ def get_schedule_with_empty_slots(day_index, week_offset=0):
         InlineKeyboardButton("⚙️ Настройки", callback_data="settings")
     ]
     
-    keyboard = [buttons, nav_buttons, action_buttons]
+    keyboard = buttons + [nav_buttons] + [action_buttons]
     return InlineKeyboardMarkup(keyboard)
 
 def get_day_keyboard(week_offset=0, selected_day=0):
@@ -324,13 +311,11 @@ async def show_schedule_message(update_or_query, context, text_prefix=""):
     context.user_data['selected_day'] = day_index
     context.user_data['week_offset'] = 0
     
-    # Получаем текст расписания
     text = format_schedule(day_index, 0)
     keyboard = get_day_keyboard(0, day_index)
     
     full_text = f"{text_prefix}\n\n{text}" if text_prefix else text
     
-    # Проверяем тип объекта
     if hasattr(update_or_query, 'callback_query') and update_or_query.callback_query:
         await update_or_query.callback_query.edit_message_text(
             full_text,
@@ -788,12 +773,10 @@ async def select_student(update: Update, context: ContextTypes.DEFAULT_TYPE):
         student_id = parts[1]
         student_name = "_".join(parts[2:])
         
-        # Проверяем, есть ли уже выбранный слот
         slot_time = context.user_data.get("selected_slot")
         selected_date = context.user_data.get("selected_date")
         
         if slot_time and selected_date:
-            # Добавляем ученика в выбранный слот
             day, month, year = map(int, selected_date.split('.'))
             key = f"{year:04d}-{month:02d}-{day:02d}"
             
@@ -1275,7 +1258,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await settings_callback(update, context)
         return
     
-    # Удаление ученика и добавление в слот
     if data.startswith("delete_lesson_") or data.startswith("add_slot_") or data == "back_to_schedule":
         await delete_lesson_confirm(update, context)
         return
