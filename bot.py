@@ -43,9 +43,6 @@ GROUPS_FILE = "groups.json"
 SETTINGS_FILE = "settings.json"
 SLOTS_FILE = "slots.json"
 
-# ======================== URL MINI APP ========================
-APP_URL = "https://romanvereta-create.github.io/schedule-mini-app/"
-
 def load_json(filename, default=None):
     if default is None:
         default = {}
@@ -322,7 +319,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if data == "open_app":
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🚀 Открыть Mini App", web_app=WebAppInfo(url=APP_URL))]
+            [InlineKeyboardButton("🚀 Открыть Mini App", web_app=WebAppInfo(url="https://romanvereta-create.github.io/schedule-mini-app/"))]
         ])
         await query.edit_message_text(
             "📱 *Открой приложение для удобного управления расписанием!*\n\n"
@@ -1025,7 +1022,7 @@ async def handle_manual_input(update: Update, context: ContextTypes.DEFAULT_TYPE
             [InlineKeyboardButton("❌ Отмена", callback_data="cancel_add")]
         ]
         await update.message.reply_text(
-            f"✅ {name} na {slot_time}!\n\nПовторить?",
+            f"✅ {name} на {slot_time}!\n\nПовторить?",
             reply_markup=InlineKeyboardMarkup(buttons)
         )
     else:
@@ -1098,7 +1095,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def app_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🚀 Открыть Mini App", web_app=WebAppInfo(url=APP_URL))]
+        [InlineKeyboardButton("🚀 Открыть Mini App", web_app=WebAppInfo(url="https://romanvereta-create.github.io/schedule-mini-app/"))]
     ])
     await update.message.reply_text(
         "📱 *Открой приложение для удобного управления расписанием!*\n\n"
@@ -1158,9 +1155,19 @@ async def settings_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def web_app_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка данных от Mini App"""
-    data = json.loads(update.message.web_app_data.data)
+    try:
+        data = json.loads(update.message.web_app_data.data)
+    except:
+        return
+    
     action = data.get('action')
     user_id = data.get('user_id')
+    
+    # Функция для отправки ответа в Mini App
+    async def send_response(response_data):
+        response_json = json.dumps(response_data, ensure_ascii=False)
+        # Отправляем как текстовое сообщение с пометкой, что это ответ для Mini App
+        await update.message.reply_text(f"__MINIAPP_RESPONSE__{response_json}")
     
     # ========== ПОЛУЧИТЬ РАСПИСАНИЕ ==========
     if action == 'get_schedule':
@@ -1181,7 +1188,7 @@ async def web_app_data_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             "slots": slots,
             "lessons": lessons
         }
-        await update.message.reply_text(json.dumps(response, ensure_ascii=False))
+        await send_response(response)
         return
     
     # ========== ПОЛУЧИТЬ УЧЕНИКОВ ==========
@@ -1191,7 +1198,7 @@ async def web_app_data_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             "action": "get_students",
             "students": students
         }
-        await update.message.reply_text(json.dumps(response, ensure_ascii=False))
+        await send_response(response)
         return
     
     # ========== ПОЛУЧИТЬ СЛОТЫ ==========
@@ -1201,7 +1208,7 @@ async def web_app_data_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             "action": "get_slots",
             "slots": slots
         }
-        await update.message.reply_text(json.dumps(response, ensure_ascii=False))
+        await send_response(response)
         return
     
     # ========== ДОБАВИТЬ ЗАНЯТИЕ ==========
@@ -1218,9 +1225,11 @@ async def web_app_data_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         if date not in schedule:
             schedule[date] = []
         
+        # Проверяем, не занят ли слот
         for lesson in schedule[date]:
             if lesson.get('time') == time:
-                await update.message.reply_text(json.dumps({"error": "Слот уже занят!"}))
+                response = {"action": "add_lesson", "status": "error", "message": "Слот уже занят!"}
+                await send_response(response)
                 return
         
         schedule[date].append({
@@ -1234,6 +1243,7 @@ async def web_app_data_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         })
         save_schedule(schedule)
         
+        # Если повтор — добавляем на другие даты
         if repeat == "month":
             year, month, day = map(int, date.split('-'))
             start_date = datetime.datetime(year, month, day)
@@ -1277,8 +1287,23 @@ async def web_app_data_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                 current += datetime.timedelta(days=7)
             save_schedule(schedule)
         
-        response = {"action": "add_lesson", "status": "ok"}
-        await update.message.reply_text(json.dumps(response, ensure_ascii=False))
+        # После добавления возвращаем обновленное расписание для этого дня
+        day_index = 0  # текущий день
+        week_offset = 0
+        slots = load_slots()
+        today = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
+        start_of_week = today - datetime.timedelta(days=today.weekday())
+        target_date = start_of_week + datetime.timedelta(days=day_index + week_offset * 7)
+        key = target_date.strftime("%Y-%m-%d")
+        updated_lessons = schedule.get(key, [])
+        
+        response = {
+            "action": "add_lesson",
+            "status": "ok",
+            "lessons": updated_lessons,
+            "slots": slots
+        }
+        await send_response(response)
         return
     
     # ========== УДАЛИТЬ ЗАНЯТИЕ ==========
@@ -1294,8 +1319,16 @@ async def web_app_data_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                 del schedule[date_key]
             save_schedule(schedule)
         
-        response = {"action": "delete_lesson", "status": "ok"}
-        await update.message.reply_text(json.dumps(response, ensure_ascii=False))
+        # Возвращаем обновленное расписание
+        slots = load_slots()
+        lessons = schedule.get(date_key, [])
+        response = {
+            "action": "delete_lesson",
+            "status": "ok",
+            "lessons": lessons,
+            "slots": slots
+        }
+        await send_response(response)
         return
     
     # ========== ИЗМЕНИТЬ ВРЕМЯ ==========
@@ -1310,8 +1343,8 @@ async def web_app_data_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             slots = sorted(slots)
             save_slots(slots)
         
-        response = {"action": "edit_time", "status": "ok"}
-        await update.message.reply_text(json.dumps(response, ensure_ascii=False))
+        response = {"action": "edit_time", "status": "ok", "slots": slots}
+        await send_response(response)
         return
     
     # ========== НАСТРОИТЬ НАПОМИНАНИЕ ==========
@@ -1331,7 +1364,7 @@ async def web_app_data_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             save_schedule(schedule)
         
         response = {"action": "set_reminder", "status": "ok"}
-        await update.message.reply_text(json.dumps(response, ensure_ascii=False))
+        await send_response(response)
         return
     
     # ========== НАСТРОЙКИ ==========
@@ -1342,7 +1375,7 @@ async def web_app_data_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             "reminder_minutes": settings.get('reminder_minutes', 60),
             "zoom_link": settings.get('zoom_link', '')
         }
-        await update.message.reply_text(json.dumps(response, ensure_ascii=False))
+        await send_response(response)
         return
 
 async def check_reminders(context: ContextTypes.DEFAULT_TYPE):
