@@ -1160,11 +1160,18 @@ async def web_app_data_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     except:
         return
     
+    print(f"📥 Получен запрос от Mini App: {data}")
+     
+    action = data.get('action')
+    user_id = data.get('user_id')
+
+
     action = data.get('action')
     user_id = data.get('user_id')
     
     # Функция для отправки ответа в Mini App
     async def send_response(response_data):
+        print(f"📤 Ответ Mini App: {response_data}")
         response_json = json.dumps(response_data, ensure_ascii=False)
         # Отправляем как текстовое сообщение с пометкой, что это ответ для Mini App
         await update.message.reply_text(f"__MINIAPP_RESPONSE__{response_json}")
