@@ -1,4 +1,3 @@
-
 import subprocess
 import sys
 import os
@@ -122,13 +121,15 @@ def get_schedule_keyboard(day_index, week_offset=0):
         
         if lesson:
             student = lesson.get("student", "Неизвестно")
+            row.append(InlineKeyboardButton(student, callback_data=f"edit_student_{key}_{slot}"))
             reminder = lesson.get("reminder_minutes", 60)
             if reminder > 0:
-                row.append(InlineKeyboardButton(f"👤 {student} 🔔", callback_data=f"edit_student_{key}_{slot}"))
+                row.append(InlineKeyboardButton("🔔✅", callback_data=f"edit_reminder_{key}_{slot}"))
             else:
-                row.append(InlineKeyboardButton(f"👤 {student} 🔕", callback_data=f"edit_student_{key}_{slot}"))
+                row.append(InlineKeyboardButton("🔕❌", callback_data=f"edit_reminder_{key}_{slot}"))
         else:
             row.append(InlineKeyboardButton("➕", callback_data=f"add_slot_{key}_{slot}"))
+            row.append(InlineKeyboardButton(" ", callback_data="empty"))
         
         buttons.append(row)
     
@@ -175,6 +176,7 @@ def get_students_keyboard():
 
 def get_time_picker_keyboard(key, current_time):
     buttons = []
+    # Целые часы (4 в ряд)
     row = []
     for h in range(9, 23):
         time_str = f"{h:02d}:00"
@@ -185,6 +187,7 @@ def get_time_picker_keyboard(key, current_time):
     if row:
         buttons.append(row)
     
+    # Кнопки +5 и -5
     current_hour = int(current_time.split(":")[0])
     current_min = int(current_time.split(":")[1])
     
@@ -311,15 +314,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         day_index = today.weekday()
         context.user_data['selected_day'] = day_index
         context.user_data['week_offset'] = 0
-        
-        text = format_schedule(day_index, 0)
-        keyboard = get_schedule_keyboard(day_index, 0)
-        
-        await query.edit_message_text(
-            text,
-            reply_markup=keyboard,
-            parse_mode=None
-        )
+        await show_schedule(query, context)
         return
     
     if data.startswith("day_"):
@@ -328,30 +323,14 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         week_offset = int(parts[2])
         context.user_data['selected_day'] = day_index
         context.user_data['week_offset'] = week_offset
-        
-        text = format_schedule(day_index, week_offset)
-        keyboard = get_schedule_keyboard(day_index, week_offset)
-        
-        await query.edit_message_text(
-            text,
-            reply_markup=keyboard,
-            parse_mode=None
-        )
+        await show_schedule(query, context)
         return
     
     if data.startswith("week_"):
         week_offset = int(data.split("_")[1])
         context.user_data['week_offset'] = week_offset
         day_index = context.user_data.get('selected_day', 0)
-        
-        text = format_schedule(day_index, week_offset)
-        keyboard = get_schedule_keyboard(day_index, week_offset)
-        
-        await query.edit_message_text(
-            text,
-            reply_markup=keyboard,
-            parse_mode=None
-        )
+        await show_schedule(query, context)
         return
     
     if data.startswith("preview_time_"):
@@ -373,6 +352,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         key = parts[2]
         new_time = "_".join(parts[3:])
         
+        # Находим старый слот
         slots = load_slots()
         old_time = None
         for slot in slots:
@@ -388,10 +368,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not old_time:
             old_time = slots[0] if slots else "10:00"
         
+        # Проверяем, не занято ли новое время
         if new_time in slots and new_time != old_time:
             await query.edit_message_text(f"❌ Время {new_time} уже существует!", parse_mode=None)
             return
         
+        # Меняем слот
         if old_time in slots:
             idx = slots.index(old_time)
             slots[idx] = new_time
@@ -491,11 +473,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         buttons = [
                             [InlineKeyboardButton("🗑 Удалить", callback_data=f"confirm_delete_{key}_{time}")],
                             [InlineKeyboardButton("🔄 Заменить", callback_data=f"replace_student_{key}_{time}")],
-                            [InlineKeyboardButton("⏰ Напоминание", callback_data=f"reminder_{key}_{time}")],
                             [InlineKeyboardButton("❌ Отмена", callback_data="cancel_add")]
                         ]
                         await query.edit_message_text(
-                            f"👤 {lesson.get('student')}\n🕐 {time}\n🔔 Напоминание: {lesson.get('reminder_minutes', 60)} мин\n\nЧто сделать?",
+                            f"👤 {lesson.get('student')}\n\nЧто сделать?",
                             reply_markup=InlineKeyboardMarkup(buttons),
                             parse_mode=None
                         )
@@ -510,19 +491,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode=None
         )
         context.user_data.pop("waiting_for_student", None)
-        return
-    
-    if data.startswith("reminder_"):
-        parts = data.split("_")
-        key = parts[1]
-        time = "_".join(parts[2:])
-        
-        keyboard = get_reminder_picker_keyboard(key, time)
-        await query.edit_message_text(
-            f"🔔 Выбери время напоминания для {time}:",
-            reply_markup=keyboard,
-            parse_mode=None
-        )
         return
     
     if data.startswith("confirm_delete_"):
@@ -763,17 +731,29 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     buttons = [
                         [InlineKeyboardButton("🗑 Удалить", callback_data=f"confirm_delete_{key}_{time}")],
                         [InlineKeyboardButton("🔄 Заменить", callback_data=f"replace_student_{key}_{time}")],
-                        [InlineKeyboardButton("⏰ Напоминание", callback_data=f"reminder_{key}_{time}")],
                         [InlineKeyboardButton("❌ Отмена", callback_data="cancel_add")]
                     ]
                     await query.edit_message_text(
-                        f"👤 {lesson.get('student')}\n🕐 {time}\n🔔 Напоминание: {lesson.get('reminder_minutes', 60)} мин\n\nЧто сделать?",
+                        f"👤 {lesson.get('student')}\n\nЧто сделать?",
                         reply_markup=InlineKeyboardMarkup(buttons),
                         parse_mode=None
                     )
                     return
         
         await query.edit_message_text("❌ Занятие не найдено", parse_mode=None)
+        return
+    
+    if data.startswith("edit_reminder_"):
+        parts = data.split("_")
+        key = parts[2]
+        time = "_".join(parts[3:])
+        
+        keyboard = get_reminder_picker_keyboard(key, time)
+        await query.edit_message_text(
+            f"🔔 Выбери время напоминания для {time}:",
+            reply_markup=keyboard,
+            parse_mode=None
+        )
         return
     
     if data.startswith("set_reminder_"):
@@ -1197,11 +1177,16 @@ def generate_week_pdf():
     week_data = []
     max_lessons = 0
     
-    if os.path.exists('DejaVuSansCondensed.ttf'):
-        pdfmetrics.registerFont(TTFont('DejaVu', 'DejaVuSansCondensed.ttf'))
+    # РЕГИСТРИРУЕМ ШРИФТ ДЛЯ КИРИЛЛИЦЫ
+    font_path = 'DejaVuSansCondensed.ttf'
+    if os.path.exists(font_path):
+        pdfmetrics.registerFont(TTFont('DejaVu', font_path))
         font_name = 'DejaVu'
+        font_name_bold = 'DejaVu'
     else:
         font_name = 'Helvetica'
+        font_name_bold = 'Helvetica-Bold'
+        print("⚠️ Шрифт DejaVuSansCondensed.ttf не найден! Кириллица не отобразится.")
     
     for i, day in enumerate(days):
         current_date = start_of_week + datetime.timedelta(days=i)
@@ -1254,6 +1239,7 @@ def generate_week_pdf():
                            topMargin=30, bottomMargin=30)
     
     styles = getSampleStyleSheet()
+    
     title_style = ParagraphStyle(
         'TitleStyle',
         parent=styles['Title'],
@@ -1268,7 +1254,7 @@ def generate_week_pdf():
         parent=styles['Normal'],
         fontSize=10,
         alignment=TA_CENTER,
-        fontName=font_name + '-Bold',
+        fontName=font_name_bold,
         textColor=colors.white,
         backColor=colors.grey,
         spaceAfter=2,
@@ -1315,7 +1301,7 @@ def generate_week_pdf():
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('FONTNAME', (0, 0), (-1, 0), font_name + '-Bold'),
+        ('FONTNAME', (0, 0), (-1, 0), font_name_bold),
         ('FONTSIZE', (0, 0), (-1, 0), 10),
         ('FONTNAME', (0, 1), (-1, -1), font_name),
         ('FONTSIZE', (0, 1), (-1, -1), 8),
