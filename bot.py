@@ -950,7 +950,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get("waiting_for_zoom"):
         link = update.message.text.strip()
         if not link:
-            await update.message.reply_text("❌ Ссылка не может быть пустой")
+            await update.message.reply_text(f"__MINIAPP_RESPONSE__{response_json}")
             return
         
         settings = load_settings()
