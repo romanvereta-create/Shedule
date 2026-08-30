@@ -1,6 +1,7 @@
 import subprocess
 import sys
 import os
+import json
 
 def auto_install():
     required = ["python-telegram-bot[job-queue]", "pytz", "reportlab"]
@@ -24,7 +25,7 @@ auto_install()
 
 import datetime
 import json
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, WebAppInfo
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 import pytz
 from reportlab.lib.pagesizes import A4
@@ -41,6 +42,9 @@ STUDENTS_FILE = "students.json"
 GROUPS_FILE = "groups.json"
 SETTINGS_FILE = "settings.json"
 SLOTS_FILE = "slots.json"
+
+# ======================== URL MINI APP ========================
+APP_URL = "https://romanvereta-create.github.io/schedule-mini-app/"
 
 def load_json(filename, default=None):
     if default is None:
@@ -147,7 +151,8 @@ def get_schedule_keyboard(day_index, week_offset=0):
     ]
     
     action_buttons = [
-        InlineKeyboardButton("⚙️ Настройки", callback_data="settings")
+        InlineKeyboardButton("⚙️ Настройки", callback_data="settings"),
+        InlineKeyboardButton("📱 Открыть App", callback_data="open_app")
     ]
     
     keyboard = [day_buttons] + buttons + [nav_buttons] + [action_buttons]
@@ -176,7 +181,6 @@ def get_students_keyboard():
 
 def get_time_picker_keyboard(key, current_time):
     buttons = []
-    # Целые часы (4 в ряд)
     row = []
     for h in range(9, 23):
         time_str = f"{h:02d}:00"
@@ -187,7 +191,6 @@ def get_time_picker_keyboard(key, current_time):
     if row:
         buttons.append(row)
     
-    # Кнопки +5 и -5
     current_hour = int(current_time.split(":")[0])
     current_min = int(current_time.split(":")[1])
     
@@ -317,6 +320,22 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_schedule(query, context)
         return
     
+    if data == "open_app":
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🚀 Открыть Mini App", web_app=WebAppInfo(url=APP_URL))]
+        ])
+        await query.edit_message_text(
+            "📱 *Открой приложение для удобного управления расписанием!*\n\n"
+            "В приложении можно:\n"
+            "• Просматривать расписание на день/неделю\n"
+            "• Добавлять и удалять занятия\n"
+            "• Настраивать напоминания\n"
+            "• Редактировать время слотов",
+            reply_markup=keyboard,
+            parse_mode='Markdown'
+        )
+        return
+    
     if data.startswith("day_"):
         parts = data.split("_")
         day_index = int(parts[1])
@@ -352,7 +371,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         key = parts[2]
         new_time = "_".join(parts[3:])
         
-        # Находим старый слот
         slots = load_slots()
         old_time = None
         for slot in slots:
@@ -368,12 +386,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not old_time:
             old_time = slots[0] if slots else "10:00"
         
-        # Проверяем, не занято ли новое время
         if new_time in slots and new_time != old_time:
             await query.edit_message_text(f"❌ Время {new_time} уже существует!", parse_mode=None)
             return
         
-        # Меняем слот
         if old_time in slots:
             idx = slots.index(old_time)
             slots[idx] = new_time
@@ -1009,7 +1025,7 @@ async def handle_manual_input(update: Update, context: ContextTypes.DEFAULT_TYPE
             [InlineKeyboardButton("❌ Отмена", callback_data="cancel_add")]
         ]
         await update.message.reply_text(
-            f"✅ {name} на {slot_time}!\n\nПовторить?",
+            f"✅ {name} na {slot_time}!\n\nПовторить?",
             reply_markup=InlineKeyboardMarkup(buttons)
         )
     else:
@@ -1069,7 +1085,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         BotCommand("schedule", "📅 Расписание"),
         BotCommand("week", "📊 Неделя"),
         BotCommand("settings", "⚙️ Настройки"),
-        BotCommand("export", "📄 Экспорт PDF")
+        BotCommand("export", "📄 Экспорт PDF"),
+        BotCommand("app", "📱 Открыть приложение")
     ]
     await context.bot.set_my_commands(commands)
     
@@ -1078,6 +1095,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['week_offset'] = 0
     
     await show_schedule(update, context)
+
+async def app_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🚀 Открыть Mini App", web_app=WebAppInfo(url=APP_URL))]
+    ])
+    await update.message.reply_text(
+        "📱 *Открой приложение для удобного управления расписанием!*\n\n"
+        "В приложении можно:\n"
+        "• Просматривать расписание на день/неделю\n"
+        "• Добавлять и удалять занятия\n"
+        "• Настраивать напоминания\n"
+        "• Редактировать время слотов",
+        reply_markup=keyboard,
+        parse_mode='Markdown'
+    )
 
 async def show_schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await show_schedule(update, context)
@@ -1123,6 +1155,195 @@ async def settings_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     else:
         await update.message.reply_text("⚙️ Настройки", reply_markup=keyboard)
+
+async def web_app_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка данных от Mini App"""
+    data = json.loads(update.message.web_app_data.data)
+    action = data.get('action')
+    user_id = data.get('user_id')
+    
+    # ========== ПОЛУЧИТЬ РАСПИСАНИЕ ==========
+    if action == 'get_schedule':
+        day_index = data.get('day_index', 0)
+        week_offset = data.get('week_offset', 0)
+        slots = load_slots()
+        
+        today = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
+        start_of_week = today - datetime.timedelta(days=today.weekday())
+        target_date = start_of_week + datetime.timedelta(days=day_index + week_offset * 7)
+        key = target_date.strftime("%Y-%m-%d")
+        
+        schedule = load_schedule()
+        lessons = schedule.get(key, [])
+        
+        response = {
+            "action": "get_schedule",
+            "slots": slots,
+            "lessons": lessons
+        }
+        await update.message.reply_text(json.dumps(response, ensure_ascii=False))
+        return
+    
+    # ========== ПОЛУЧИТЬ УЧЕНИКОВ ==========
+    if action == 'get_students':
+        students = load_students()
+        response = {
+            "action": "get_students",
+            "students": students
+        }
+        await update.message.reply_text(json.dumps(response, ensure_ascii=False))
+        return
+    
+    # ========== ПОЛУЧИТЬ СЛОТЫ ==========
+    if action == 'get_slots':
+        slots = load_slots()
+        response = {
+            "action": "get_slots",
+            "slots": slots
+        }
+        await update.message.reply_text(json.dumps(response, ensure_ascii=False))
+        return
+    
+    # ========== ДОБАВИТЬ ЗАНЯТИЕ ==========
+    if action == 'add_lesson':
+        date = data.get('date')
+        time = data.get('time')
+        student = data.get('student')
+        student_id = data.get('student_id')
+        repeat = data.get('repeat', 'no')
+        reminder = data.get('reminder', 60)
+        zoom = data.get('zoom', '')
+        
+        schedule = load_schedule()
+        if date not in schedule:
+            schedule[date] = []
+        
+        for lesson in schedule[date]:
+            if lesson.get('time') == time:
+                await update.message.reply_text(json.dumps({"error": "Слот уже занят!"}))
+                return
+        
+        schedule[date].append({
+            "time": time,
+            "student": student,
+            "student_id": student_id,
+            "topic": "-",
+            "reminded": False,
+            "zoom_link": zoom,
+            "reminder_minutes": reminder
+        })
+        save_schedule(schedule)
+        
+        if repeat == "month":
+            year, month, day = map(int, date.split('-'))
+            start_date = datetime.datetime(year, month, day)
+            end_date = start_date + datetime.timedelta(days=28)
+            current = start_date + datetime.timedelta(days=7)
+            while current <= end_date:
+                new_key = current.strftime("%Y-%m-%d")
+                if new_key not in schedule:
+                    schedule[new_key] = []
+                schedule[new_key].append({
+                    "time": time,
+                    "student": student,
+                    "student_id": student_id,
+                    "topic": "-",
+                    "reminded": False,
+                    "zoom_link": zoom,
+                    "reminder_minutes": reminder
+                })
+                current += datetime.timedelta(days=7)
+            save_schedule(schedule)
+        elif repeat == "year":
+            year, month, day = map(int, date.split('-'))
+            start_date = datetime.datetime(year, month, day)
+            end_date = datetime.datetime(year, 5, 31)
+            if start_date > end_date:
+                end_date = datetime.datetime(year + 1, 5, 31)
+            current = start_date + datetime.timedelta(days=7)
+            while current <= end_date:
+                new_key = current.strftime("%Y-%m-%d")
+                if new_key not in schedule:
+                    schedule[new_key] = []
+                schedule[new_key].append({
+                    "time": time,
+                    "student": student,
+                    "student_id": student_id,
+                    "topic": "-",
+                    "reminded": False,
+                    "zoom_link": zoom,
+                    "reminder_minutes": reminder
+                })
+                current += datetime.timedelta(days=7)
+            save_schedule(schedule)
+        
+        response = {"action": "add_lesson", "status": "ok"}
+        await update.message.reply_text(json.dumps(response, ensure_ascii=False))
+        return
+    
+    # ========== УДАЛИТЬ ЗАНЯТИЕ ==========
+    if action == 'delete_lesson':
+        time = data.get('time')
+        schedule = load_schedule()
+        today = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
+        date_key = today.strftime("%Y-%m-%d")
+        
+        if date_key in schedule:
+            schedule[date_key] = [l for l in schedule[date_key] if l.get('time') != time]
+            if not schedule[date_key]:
+                del schedule[date_key]
+            save_schedule(schedule)
+        
+        response = {"action": "delete_lesson", "status": "ok"}
+        await update.message.reply_text(json.dumps(response, ensure_ascii=False))
+        return
+    
+    # ========== ИЗМЕНИТЬ ВРЕМЯ ==========
+    if action == 'edit_time':
+        old_time = data.get('old_time')
+        new_time = data.get('new_time')
+        
+        slots = load_slots()
+        if old_time in slots:
+            idx = slots.index(old_time)
+            slots[idx] = new_time
+            slots = sorted(slots)
+            save_slots(slots)
+        
+        response = {"action": "edit_time", "status": "ok"}
+        await update.message.reply_text(json.dumps(response, ensure_ascii=False))
+        return
+    
+    # ========== НАСТРОИТЬ НАПОМИНАНИЕ ==========
+    if action == 'set_reminder':
+        time = data.get('time')
+        minutes = data.get('minutes')
+        
+        schedule = load_schedule()
+        today = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
+        date_key = today.strftime("%Y-%m-%d")
+        
+        if date_key in schedule:
+            for lesson in schedule[date_key]:
+                if lesson.get('time') == time:
+                    lesson['reminder_minutes'] = minutes
+                    break
+            save_schedule(schedule)
+        
+        response = {"action": "set_reminder", "status": "ok"}
+        await update.message.reply_text(json.dumps(response, ensure_ascii=False))
+        return
+    
+    # ========== НАСТРОЙКИ ==========
+    if action == 'settings':
+        settings = load_settings()
+        response = {
+            "action": "settings",
+            "reminder_minutes": settings.get('reminder_minutes', 60),
+            "zoom_link": settings.get('zoom_link', '')
+        }
+        await update.message.reply_text(json.dumps(response, ensure_ascii=False))
+        return
 
 async def check_reminders(context: ContextTypes.DEFAULT_TYPE):
     settings = load_settings()
@@ -1177,7 +1398,6 @@ def generate_week_pdf():
     week_data = []
     max_lessons = 0
     
-    # РЕГИСТРИРУЕМ ШРИФТ ДЛЯ КИРИЛЛИЦЫ
     font_path = 'DejaVuSansCondensed.ttf'
     if os.path.exists(font_path):
         pdfmetrics.registerFont(TTFont('DejaVu', font_path))
@@ -1330,9 +1550,11 @@ def main():
     app.add_handler(CommandHandler("week", show_week))
     app.add_handler(CommandHandler("settings", settings_menu))
     app.add_handler(CommandHandler("export", export_week))
+    app.add_handler(CommandHandler("app", app_command))
     
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, web_app_data_handler))
     
     try:
         job_queue = app.job_queue
