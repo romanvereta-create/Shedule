@@ -55,7 +55,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"✅ Новый пользователь: {first_name} (ID: {user_id})")
     
     # ВАЖНО: ЗАМЕНИТЕ URL НА ВАШ!!!
-    YOUR_APP_URL = "https://ваш-сайт.netlify.app/"  # <--- ЗДЕСЬ ВАШ URL
+    YOUR_APP_URL = "https://romanvereta-create.github.io/schedule-mini-app/"  # <--- ЗДЕСЬ ВАШ URL
     
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("📱 Открыть приложение", web_app=WebAppInfo(url=YOUR_APP_URL))]
